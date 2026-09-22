@@ -1,0 +1,58 @@
+#!/bin/sh
+
+. /lib/functions.sh
+
+TAG='mt3600be-toggle'
+
+snapshot_radio() {
+	local section="$1" disabled
+	config_get disabled "$section" disabled '0'
+	case "$disabled" in 1) disabled=1;; *) disabled=0;; esac
+	uci -q add_list "mt3600be-toggle.wifi_state.radio=${section}=${disabled}"
+}
+
+disable_radio() {
+	uci -q set "wireless.${1}.disabled=1"
+}
+
+restore_radio() {
+	local entry="$1" section value
+	section="${entry%%=*}"
+	value="${entry#*=}"
+	case "$section" in ''|*[!A-Za-z0-9_]* ) return 0;; esac
+	case "$value" in 0|1) uci -q set "wireless.${section}.disabled=${value}";; esac
+}
+
+case "$1" in
+	snapshot)
+		uci -q delete mt3600be-toggle.wifi_state
+		uci -q set mt3600be-toggle.wifi_state='wifi_state'
+		config_load wireless
+		config_foreach snapshot_radio wifi-device
+		uci -q commit mt3600be-toggle
+		logger -t "$TAG" 'saved current WiFi radio states'
+		;;
+	off)
+		config_load wireless
+		config_foreach disable_radio wifi-device
+		uci -q commit wireless
+		wifi reload >/dev/null 2>&1
+		logger -t "$TAG" 'WiFi disabled by switch'
+		;;
+	restore)
+		config_load mt3600be-toggle
+		config_get state_type wifi_state TYPE ''
+		[ "$state_type" = 'wifi_state' ] || {
+			logger -t "$TAG" 'WiFi restore skipped: no saved state'
+			exit 1
+		}
+		config_list_foreach wifi_state radio restore_radio
+		uci -q commit wireless
+		wifi reload >/dev/null 2>&1
+		logger -t "$TAG" 'restored saved WiFi radio states'
+		;;
+	*)
+		echo "Usage: $0 {snapshot|off|restore}" >&2
+		exit 2
+		;;
+esac

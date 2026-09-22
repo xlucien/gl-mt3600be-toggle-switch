@@ -1,0 +1,19 @@
+#!/bin/sh
+
+case "$ACTION" in
+	pressed)
+		grep -q ' /overlay ' /proc/mounts || return 0
+		/usr/sbin/mt3600be-reset-control pressed
+		return 5
+		;;
+	timeout)
+		grep -q ' /overlay ' /proc/mounts || return 0
+		exec /usr/sbin/mt3600be-reset-control timeout
+		;;
+	released)
+		grep -q ' /overlay ' /proc/mounts || return 0
+		exec /usr/sbin/mt3600be-reset-control released "${SEEN:-0}"
+		;;
+esac
+
+return 0

@@ -1,0 +1,18 @@
+{
+    "admin/system/toggle": {
+        "title": "按键控制",
+        "order": 60,
+        "action": {
+            "type": "view",
+            "path": "toggle/index-v100"
+        }
+    },
+    "admin/system/toggle/api": {
+        "action": {
+            "type": "function",
+            "module": "luci.controller.toggle",
+            "function": "action_api"
+        },
+        "leaf": true
+    }
+}

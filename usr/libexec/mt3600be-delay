@@ -1,0 +1,11 @@
+#!/usr/bin/ucode
+
+'use strict';
+import * as uloop from 'uloop';
+
+let delay = +ARGV[0];
+if (delay < 1) exit(2);
+
+uloop.init();
+uloop.timer(delay, function() { uloop.end(); });
+uloop.run();

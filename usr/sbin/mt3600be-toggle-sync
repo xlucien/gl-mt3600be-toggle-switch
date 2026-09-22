@@ -1,0 +1,19 @@
+#!/bin/sh
+
+TAG='mt3600be-toggle'
+
+grep -q ' /sys/kernel/debug ' /proc/mounts 2>/dev/null || \
+	mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+
+state="$(awk '
+	index($0, "|mode") {
+		for (i = 1; i <= NF; i++) {
+			if ($i == "hi" || $i == "high") { print "high"; exit }
+			if ($i == "lo" || $i == "low")  { print "low"; exit }
+		}
+	}' /sys/kernel/debug/gpio 2>/dev/null)"
+
+case "$state" in
+	high|low) exec /usr/sbin/mt3600be-toggle-apply "$state" ;;
+	*) logger -t "$TAG" 'boot sync failed: MODE state not visible in debugfs' ;;
+esac

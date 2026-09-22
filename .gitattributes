@@ -1,0 +1,18 @@
+* text=auto
+.gitattributes text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.uc text eol=lf
+Makefile text eol=lf
+LICENSE text eol=lf
+etc/init.d/* text eol=lf
+etc/rc.button/* text eol=lf
+etc/uci-defaults/* text eol=lf
+etc/mt3600be-toggle.d/* text eol=lf
+usr/sbin/* text eol=lf
+usr/libexec/* text eol=lf
+usr/share/ucode/**/*.uc text eol=lf
+*.png binary

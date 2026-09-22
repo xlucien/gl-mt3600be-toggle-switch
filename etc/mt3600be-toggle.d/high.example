@@ -1,0 +1,4 @@
+#!/bin/sh
+# Optional MODE HIGH hook. Rename to "high" and chmod 0755 to activate.
+logger -t mt3600be-toggle-hook 'MODE high hook'
+

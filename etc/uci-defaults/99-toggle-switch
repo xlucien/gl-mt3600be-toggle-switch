@@ -1,0 +1,19 @@
+#!/bin/sh
+
+# Image-builder installations skip package postinst while assembling rootfs.
+# Complete the device-specific setup on the first boot instead.
+reset='/etc/rc.button/reset'
+backup='/etc/rc.button/reset.mt3600be-stock'
+custom='/usr/libexec/mt3600be-reset-button'
+
+if [ -x "$custom" ] && ! cmp -s "$reset" "$custom"; then
+	[ ! -e "$reset" ] || [ -e "$backup" ] || cp "$reset" "$backup"
+	cp "$custom" "$reset"
+	chmod 0755 "$reset"
+fi
+
+/etc/init.d/mt3600be-toggle enable
+/etc/init.d/mt3600be-toggle restart
+rm -f /tmp/luci-indexcache
+
+exit 0

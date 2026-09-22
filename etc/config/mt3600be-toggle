@@ -1,0 +1,37 @@
+config mt3600be_toggle 'main'
+	# 0 = record/log events only; 1 = execute enabled feature actions below
+	option global_enabled '0'
+
+	# GL-MT3600BE DTS is GPIO_ACTIVE_HIGH: pressed=HIGH, released=LOW.
+	# Electrical HIGH follows Left; LOW follows Right (same as stock firmware).
+
+	# 开机后无条件熄灭的灯（与滑块无关，空格分隔）。
+	# 白灯 white:status 是 led-boot 指示灯，开机结束后按需求保持熄灭。
+	option boot_off_leds 'white:status'
+
+	option led_enabled '0'
+	# LED 档控制的灯，支持空格分隔；GL-MT3600BE 默认只控蓝灯（led-running 运行指示）
+	option led_name 'blue:status'
+	option led_high_action '1'
+	option led_low_action '0'
+
+	# Enabling this module snapshots each wifi-device disabled state once.
+	# Left/HIGH turns all radios off; Right/LOW restores that snapshot.
+	option wifi_enabled '0'
+	option wifi_high_action '0'
+	option wifi_low_action '1'
+
+	# Proxy module snapshots the selected proxy when enabled.
+	# Left/HIGH stops it; Right/LOW restores the saved state.
+	option proxy_enabled '0'
+	option proxy_target 'auto'
+	option proxy_high_action '0'
+	option proxy_low_action '1'
+
+	# RESET multi-click control is independent from global_enabled.
+	option reset_single_enabled '0'
+	option reset_single_action 'wifi'
+	option reset_double_enabled '0'
+	option reset_double_action 'wifi'
+	option reset_triple_enabled '0'
+	option reset_triple_action 'reboot'

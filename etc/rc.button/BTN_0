@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# gpio-button-hotplug maps linux,code BTN_0 to BUTTON=BTN_0.
+# GL-MT3600BE DTS node /gpio-keys/button-mode is <&pio 3 GPIO_ACTIVE_HIGH>
+# (debugfs gpio-515, EV_SW). ACTIVE_HIGH means pressed=HIGH, released=LOW.
+case "$ACTION" in
+	pressed)  exec /usr/sbin/mt3600be-toggle-apply high ;;
+	released) exec /usr/sbin/mt3600be-toggle-apply low ;;
+esac

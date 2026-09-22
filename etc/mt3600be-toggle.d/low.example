@@ -1,0 +1,4 @@
+#!/bin/sh
+# Optional MODE LOW hook. Rename to "low" and chmod 0755 to activate.
+logger -t mt3600be-toggle-hook 'MODE low hook'
+

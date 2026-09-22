@@ -1,0 +1,214 @@
+#!/bin/sh
+
+# On-demand proxy detector/controller. It does not poll or change networking
+# unless snapshot/off/restore is explicitly requested.
+
+TAG='mt3600be-toggle-proxy'
+CHOICE="${2:-$(uci -q get mt3600be-toggle.main.proxy_target 2>/dev/null)}"
+[ -n "$CHOICE" ] || CHOICE='auto'
+
+valid_target() {
+	case "$1" in
+		auto|passwall|passwall2|openclash|ssrplus|nikki|daed|homeproxy|mihomo) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+service_for() {
+	case "$1" in
+		passwall) echo passwall ;;
+		passwall2) echo passwall2 ;;
+		openclash) echo openclash ;;
+		ssrplus) echo shadowsocksr ;;
+		nikki) echo nikki ;;
+		daed) echo daed ;;
+		homeproxy) echo homeproxy ;;
+		mihomo) [ -x /etc/init.d/mihomo ] && echo mihomo || echo mihomo-tproxy ;;
+	esac
+}
+
+installed() {
+	local service
+	service="$(service_for "$1")"
+	[ -x "/etc/init.d/$service" ] || [ -f "/etc/config/$1" ] || {
+		[ "$1" = ssrplus ] && [ -f /etc/config/shadowsocksr ]
+	}
+}
+
+configured() {
+	local value
+	case "$1" in
+		passwall) value="$(uci -q get passwall.@global[0].enabled)" ;;
+		passwall2) value="$(uci -q get passwall2.@global[0].enabled)" ;;
+		openclash) value="$(uci -q get openclash.config.enable)" ;;
+		ssrplus)
+			value="$(uci -q get shadowsocksr.@global[0].enabled)"
+			[ -n "$value" ] || {
+				value="$(uci -q get shadowsocksr.@global[0].global_server)"
+				[ -n "$value" ] && [ "$value" != nil ] && value=1
+			}
+			;;
+		nikki) value="$(uci -q get nikki.config.enabled)" ;;
+		daed) value="$(uci -q get daed.config.enabled)" ;;
+		homeproxy) value="$(uci -q get homeproxy.config.enabled)" ;;
+		mihomo)
+			value="$(uci -q get mihomo.config.enabled)"
+			[ -n "$value" ] || value="$(uci -q get mihomo-tproxy.config.enabled)"
+			;;
+	esac
+	[ "$value" = 1 ]
+}
+
+running() {
+	local service json
+	service="$(service_for "$1")"
+	json="$(ubus call service list "{\"name\":\"$service\"}" 2>/dev/null)"
+	echo "$json" | grep -q '"running"[[:space:]]*:[[:space:]]*true' && return 0
+	case "$1" in
+		passwall) pgrep -f '/tmp/etc/passwall/|/usr/share/passwall/' >/dev/null 2>&1 ;;
+		passwall2) pgrep -f '/tmp/etc/passwall2/|/usr/share/passwall2/' >/dev/null 2>&1 ;;
+		openclash) pgrep -f '/etc/openclash/.*clash|/etc/openclash/.*mihomo' >/dev/null 2>&1 ;;
+		ssrplus) pgrep -f 'ssr-redir|ss-redir|ssrplus|/tmp/etc/ssr' >/dev/null 2>&1 ;;
+		nikki) pgrep -f '/etc/nikki/|mihomo.*nikki' >/dev/null 2>&1 ;;
+		daed) pidof daed >/dev/null 2>&1 || pidof dae >/dev/null 2>&1 ;;
+		homeproxy) pgrep -f '/etc/homeproxy/|sing-box.*homeproxy' >/dev/null 2>&1 ;;
+		mihomo) pgrep -f 'mihomo.*tproxy|mihomo-tproxy' >/dev/null 2>&1 ;;
+	esac
+}
+
+detect_one() {
+	local mode="$1" item found='' count=0
+	for item in passwall passwall2 openclash ssrplus nikki daed homeproxy mihomo; do
+		installed "$item" || continue
+		case "$mode" in
+			running) running "$item" || continue ;;
+			configured) configured "$item" || continue ;;
+		esac
+		found="$item"; count=$((count + 1))
+	done
+	[ "$count" -eq 1 ] && { echo "$found"; return 0; }
+	[ "$count" -gt 1 ] && { echo conflict; return 1; }
+	return 2
+}
+
+resolve() {
+	local found rc last
+	if [ "$CHOICE" != auto ]; then echo "$CHOICE"; return; fi
+	found="$(detect_one running)"; rc=$?
+	[ "$rc" -eq 0 ] && { echo "$found"; return; }
+	last="$(uci -q get mt3600be-toggle.main.proxy_last_target)"
+	[ -n "$last" ] || last="$(uci -q get mt3600be-toggle.proxy_state.target)"
+	if [ -n "$last" ] && [ "$last" != auto ] && installed "$last"; then
+		if [ "$rc" -eq 1 ]; then
+			running "$last" && { echo "$last"; return; }
+		else
+			echo "$last"; return
+		fi
+	fi
+	[ "$rc" -eq 1 ] && { echo conflict; return 1; }
+	found="$(detect_one configured)"; rc=$?
+	[ "$rc" -le 1 ] && { echo "$found"; return; }
+	found="$(detect_one installed)"; rc=$?
+	[ "$rc" -le 1 ] && { echo "$found"; return; }
+	echo none
+}
+
+set_configured() {
+	local item="$1" value="$2" package
+	case "$item" in
+		passwall) uci -q set "passwall.@global[0].enabled=$value"; package=passwall ;;
+		passwall2) uci -q set "passwall2.@global[0].enabled=$value"; package=passwall2 ;;
+		openclash) uci -q set "openclash.config.enable=$value"; package=openclash ;;
+		ssrplus)
+			if uci -q get shadowsocksr.@global[0].enabled >/dev/null; then
+				uci -q set "shadowsocksr.@global[0].enabled=$value"
+			fi
+			package=shadowsocksr
+			;;
+		nikki) uci -q set "nikki.config.enabled=$value"; package=nikki ;;
+		daed)
+			uci -q get daed.config.enabled >/dev/null && uci -q set "daed.config.enabled=$value"
+			package=daed
+			;;
+		homeproxy) uci -q set "homeproxy.config.enabled=$value"; package=homeproxy ;;
+		mihomo)
+			if uci -q get mihomo.config.enabled >/dev/null; then
+				uci -q set "mihomo.config.enabled=$value"; package=mihomo
+			else
+				uci -q set "mihomo-tproxy.config.enabled=$value"; package=mihomo-tproxy
+			fi
+			;;
+	esac
+	[ -n "$package" ] && uci -q commit "$package"
+}
+
+print_status() {
+	local item state=not_installed configured_value=0 running_value=0
+	item="$(resolve)"
+	if [ "$item" = conflict ]; then
+		state=conflict
+	elif [ "$item" != none ] && installed "$item"; then
+		configured "$item" && configured_value=1
+		running "$item" && running_value=1
+		if [ "$running_value" = 1 ]; then state=running
+		elif [ "$configured_value" = 1 ]; then state=error
+		else state=installed
+		fi
+	fi
+	printf 'target=%s\nstate=%s\nconfigured=%s\nrunning=%s\n' "$item" "$state" "$configured_value" "$running_value"
+}
+
+valid_target "$CHOICE" || exit 2
+
+case "$1" in
+	status|detect|'') print_status ;;
+	snapshot)
+		TARGET="$(resolve)"
+		[ "$TARGET" != none ] && [ "$TARGET" != conflict ] && installed "$TARGET" || exit 0
+		uci -q set "mt3600be-toggle.main.proxy_last_target=$TARGET"
+		configured "$TARGET" && CONFIGURED=1 || CONFIGURED=0
+		running "$TARGET" && WAS_RUNNING=1 || WAS_RUNNING=0
+		uci -q set mt3600be-toggle.proxy_state='proxy_state'
+		uci -q set "mt3600be-toggle.proxy_state.target=$TARGET"
+		uci -q set "mt3600be-toggle.proxy_state.configured=$CONFIGURED"
+		uci -q set "mt3600be-toggle.proxy_state.running=$WAS_RUNNING"
+		uci -q commit mt3600be-toggle
+		logger -t "$TAG" "snapshot target=$TARGET configured=$CONFIGURED running=$WAS_RUNNING"
+		;;
+	off)
+		TARGET="$(resolve)"
+		[ "$TARGET" != none ] && [ "$TARGET" != conflict ] && installed "$TARGET" || exit 0
+		uci -q set "mt3600be-toggle.main.proxy_last_target=$TARGET"
+		uci -q commit mt3600be-toggle
+		SERVICE="$(service_for "$TARGET")"
+		set_configured "$TARGET" 0
+		[ -x "/etc/init.d/$SERVICE" ] && "/etc/init.d/$SERVICE" stop >/dev/null 2>&1
+		logger -t "$TAG" "stopped $TARGET"
+		;;
+	on)
+		TARGET="$(resolve)"
+		[ "$TARGET" != none ] && [ "$TARGET" != conflict ] && installed "$TARGET" || exit 1
+		uci -q set "mt3600be-toggle.main.proxy_last_target=$TARGET"
+		uci -q commit mt3600be-toggle
+		SERVICE="$(service_for "$TARGET")"
+		set_configured "$TARGET" 1
+		[ -x "/etc/init.d/$SERVICE" ] && "/etc/init.d/$SERVICE" restart >/dev/null 2>&1
+		logger -t "$TAG" "started $TARGET"
+		;;
+	restore)
+		TARGET="$(uci -q get mt3600be-toggle.proxy_state.target)"
+		WAS_CONFIGURED="$(uci -q get mt3600be-toggle.proxy_state.configured)"
+		WAS_RUNNING="$(uci -q get mt3600be-toggle.proxy_state.running)"
+		[ -n "$TARGET" ] || exit 0
+		installed "$TARGET" || exit 0
+		SERVICE="$(service_for "$TARGET")"
+		set_configured "$TARGET" "${WAS_CONFIGURED:-0}"
+		if [ "$WAS_RUNNING" = 1 ] && [ -x "/etc/init.d/$SERVICE" ]; then
+			"/etc/init.d/$SERVICE" restart >/dev/null 2>&1
+		else
+			[ -x "/etc/init.d/$SERVICE" ] && "/etc/init.d/$SERVICE" stop >/dev/null 2>&1
+		fi
+		logger -t "$TAG" "restored $TARGET configured=${WAS_CONFIGURED:-0} running=${WAS_RUNNING:-0}"
+		;;
+	*) exit 2 ;;
+esac

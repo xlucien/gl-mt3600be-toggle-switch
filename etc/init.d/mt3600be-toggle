@@ -1,0 +1,43 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=10
+
+install_reset_handler() {
+	local reset='/etc/rc.button/reset'
+	local backup='/etc/rc.button/reset.mt3600be-stock'
+	local custom='/usr/libexec/mt3600be-reset-button'
+
+	[ -x "$custom" ] || return 0
+	cmp -s "$reset" "$custom" && return 0
+	[ ! -e "$reset" ] || [ -e "$backup" ] || cp "$reset" "$backup"
+	cp "$custom" "$reset"
+	chmod 0755 "$reset"
+}
+
+# 强制熄灭与滑块无关的灯（boot_off_leds，空格分隔）。
+# 白灯 white:status 是 led-boot 指示灯，这里保证开机结束后它保持熄灭。
+force_boot_off_leds() {
+	local leds led path
+	leds="$(uci -q get mt3600be-toggle.main.boot_off_leds 2>/dev/null)"
+	[ -n "$leds" ] || return 0
+	for led in $leds; do
+		path="/sys/class/leds/${led}"
+		[ -d "$path" ] || continue
+		[ -w "$path/trigger" ] && echo none > "$path/trigger"
+		[ -w "$path/brightness" ] && echo 0 > "$path/brightness"
+	done
+}
+
+start() {
+	install_reset_handler
+	force_boot_off_leds
+	# One read at boot; subsequent changes arrive through gpio-button-hotplug.
+	/usr/sbin/mt3600be-toggle-sync
+}
+
+reload() {
+	install_reset_handler
+	force_boot_off_leds
+	/usr/sbin/mt3600be-toggle-sync
+}

@@ -1,0 +1,93 @@
+#!/bin/sh
+
+. /lib/functions.sh
+
+TAG='mt3600be-toggle'
+STATE_FILE='/tmp/mt3600be-toggle-state'
+LEVEL="$1"
+FORCE="$2"
+
+case "$LEVEL" in high) VALUE=1;; low) VALUE=0;; *) exit 2;; esac
+
+config_load 'mt3600be-toggle'
+config_get_bool GLOBAL_ENABLED main global_enabled '0'
+
+previous="$(cat "$STATE_FILE" 2>/dev/null)"
+[ "$previous" = "$VALUE" ] && [ "$FORCE" != 'force' ] && exit 0
+echo "$VALUE" > "$STATE_FILE"
+logger -t "$TAG" "MODE=$VALUE ($LEVEL)"
+
+[ "$GLOBAL_ENABLED" -eq 1 ] || exit 0
+
+set_led() {
+	local enabled name action max path led
+	config_get_bool enabled main led_enabled '0'
+	[ "$enabled" -eq 1 ] || return 0
+	# led_name accepts a space separated list, e.g. 'blue:status white:status'
+	config_get name main led_name ''
+	[ -n "$name" ] || { logger -t "$TAG" 'LED enabled but led_name is empty'; return 0; }
+	config_get action main "led_${LEVEL}_action" '0'
+	for led in $name; do
+		path="/sys/class/leds/${led}"
+		if [ ! -w "$path/brightness" ]; then
+			logger -t "$TAG" "LED not found: $led"
+			continue
+		fi
+		[ -w "$path/trigger" ] && echo none > "$path/trigger"
+		if [ "$action" = '1' ]; then
+			read -r max < "$path/max_brightness"
+			echo "${max:-1}" > "$path/brightness"
+		else
+			echo 0 > "$path/brightness"
+		fi
+	done
+}
+
+set_service_feature() {
+	local prefix="$1" service="$2" uci_path="$3" enabled action
+	config_get_bool enabled main "${prefix}_enabled" '0'
+	[ "$enabled" -eq 1 ] || return 0
+	config_get action main "${prefix}_${LEVEL}_action" '0'
+	if [ "$action" = '1' ]; then
+		uci -q set "${uci_path}=1"
+		uci -q commit "${uci_path%%.*}"
+		[ -x "/etc/init.d/${service}" ] && "/etc/init.d/${service}" start
+		logger -t "$TAG" "$prefix enabled"
+	else
+		uci -q set "${uci_path}=0"
+		uci -q commit "${uci_path%%.*}"
+		[ -x "/etc/init.d/${service}" ] && "/etc/init.d/${service}" stop
+		logger -t "$TAG" "$prefix disabled"
+	fi
+}
+
+set_wifi() {
+	local enabled action
+	config_get_bool enabled main wifi_enabled '0'
+	[ "$enabled" -eq 1 ] || return 0
+	config_get action main "wifi_${LEVEL}_action" '0'
+	if [ "$action" = '1' ]; then
+		/usr/sbin/mt3600be-toggle-wifi restore
+	else
+		/usr/sbin/mt3600be-toggle-wifi off
+	fi
+}
+
+set_proxy() {
+	local enabled action
+	config_get_bool enabled main proxy_enabled '0'
+	[ "$enabled" -eq 1 ] || return 0
+	config_get action main "proxy_${LEVEL}_action" '0'
+	if [ "$action" = '1' ]; then
+		/usr/sbin/mt3600be-toggle-proxy on
+	else
+		/usr/sbin/mt3600be-toggle-proxy off
+	fi
+}
+
+set_led
+set_wifi
+set_proxy
+
+HOOK="/etc/mt3600be-toggle.d/${LEVEL}"
+[ -x "$HOOK" ] && "$HOOK"
