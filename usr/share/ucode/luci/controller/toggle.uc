@@ -57,6 +57,19 @@ function physical_state() {
     return trim(fs.readfile('/tmp/mt3600be-toggle-state') ?? '') == '1' ? '1' : '0';
 }
 
+// 直接读 debugfs 里 mode 引脚的真实电平，返回 '1'(HIGH/左) / '0'(LOW/右) / null。
+// 用于「当前开关位置」展示——与物理硬件一致，不会被模拟拨动改写的位置缓存影响。
+function physical_gpio() {
+    let raw = fs.readfile('/sys/kernel/debug/gpio') ?? '';
+    if (raw == '') return null;
+    for (let line in split(raw, '\n')) {
+        if (index(line, '|mode') < 0) continue;
+        let m = match(line, /(^|\s)(hi|lo)(\s|$)/);
+        if (m) return m[2] == 'hi' ? '1' : '0';
+    }
+    return null;
+}
+
 function json_out(data, status) {
     status ??= 200;
     http.status(status, status == 200 ? 'OK' : 'Bad Request');
@@ -65,9 +78,18 @@ function json_out(data, status) {
     http.write_json(data);
 }
 
+function read_led(path) {
+    let v = trim(fs.readfile(path) ?? '0');
+    return v == '1' ? 'on' : 'off';
+}
+
 function full_data() {
-    let physical = physical_state();
+    let physical = physical_gpio();
+    if (physical == null) physical = physical_state();
     return {
+        switch_position: physical == '1' ? 'left' : 'right',
+        blue_led: read_led('/sys/class/leds/blue:status/brightness'),
+        white_led: read_led('/sys/class/leds/white:status/brightness'),
         global_enabled: cfg_bool('global_enabled', '0'),
         led_enabled: cfg_bool('led_enabled', '0'),
         led_left_action: cfg_bool('led_high_action', '1'),
@@ -87,8 +109,7 @@ function full_data() {
         reset_triple_enabled: cfg_bool('reset_triple_enabled', '0'),
         reset_triple_action: cfg_get('reset_triple_action', 'reboot'),
         reset_status: kv_file('/tmp/mt3600be-reset/last', { gesture: 'none', action: 'none', result: 'none', time: '' }),
-        current_mode: physical == '1' ? '0' : '1',
-        default_led: cfg_get('led_name', 'white:status')
+        led_name: cfg_get('led_name', 'blue:status')
     };
 }
 
@@ -134,18 +155,25 @@ function save(requested_action) {
     return json_out({ success: true, applied: requested_action == 'save', proxy_status: proxy_status(new_target) });
 }
 
+// 模拟一次拨动：按指定方向强制执行一次动作（用于页面演示图点击预览）。
+// 用 force 跳过去重，因此即使与当前物理位置相同也会真实触发一次。
+function simulate() {
+    let side = http.formvalue('side');
+    let level = side == 'left' ? 'high' : (side == 'right' ? 'low' : null);
+    if (level == null)
+        return json_out({ success: false, error: '无效的拨动方向' }, 400);
+    system(`/usr/sbin/mt3600be-toggle-apply ${level} force >/dev/null 2>&1`);
+    return json_out({ success: true, side: side, data: full_data() });
+}
+
 return {
-    action_api: function() {
-        let method = http.getenv('REQUEST_METHOD') ?? 'GET';
-        if (method == 'GET') {
-            let physical = physical_state();
-            if (http.formvalue('brief') == '1') return json_out({ success: true, data: { current_mode: physical == '1' ? '0' : '1' } });
-            return json_out({ success: true, data: full_data() });
-        }
-        let action = http.formvalue('action');
-        if (method == 'POST' && action == 'detect_proxy')
-            return json_out({ success: true, proxy_status: proxy_status(http.formvalue('proxy_target')) });
-        if (method == 'POST' && (action == 'save' || action == 'save_only')) return save(action);
-        return json_out({ success: false, error: '无效请求' }, 400);
+    action_data: function() {
+        return json_out({ success: true, data: full_data() });
+    },
+    action_save: function() {
+        return save('save');
+    },
+    action_simulate: function() {
+        return simulate();
     }
 };

@@ -51,13 +51,10 @@ define Package/toggle-switch/install
 	$(INSTALL_DIR) $(1)/usr/libexec
 	$(INSTALL_BIN) ./usr/libexec/mt3600be-reset-button $(1)/usr/libexec/mt3600be-reset-button
 	$(INSTALL_BIN) ./usr/libexec/mt3600be-delay $(1)/usr/libexec/mt3600be-delay
-	$(INSTALL_DIR) $(1)/usr/share/ucode/luci/controller $(1)/usr/share/luci/menu.d
+	$(INSTALL_DIR) $(1)/usr/share/ucode/luci/controller $(1)/usr/share/luci/menu.d $(1)/usr/share/ucode/luci/template
 	$(INSTALL_DATA) ./usr/share/ucode/luci/controller/toggle.uc $(1)/usr/share/ucode/luci/controller/toggle.uc
 	$(INSTALL_DATA) ./usr/share/luci/menu.d/toggle-switch.json $(1)/usr/share/luci/menu.d/toggle-switch.json
-	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/toggle
-	$(INSTALL_DATA) ./www/luci-static/resources/view/toggle/index.js $(1)/www/luci-static/resources/view/toggle/index.js
-	$(INSTALL_DATA) ./www/luci-static/resources/view/toggle/index.js $(1)/www/luci-static/resources/view/toggle/index-v100.js
-	$(INSTALL_DATA) ./www/luci-static/resources/view/toggle/index.css $(1)/www/luci-static/resources/view/toggle/index.css
+	$(INSTALL_DATA) ./usr/share/ucode/luci/template/toggle.ut $(1)/usr/share/ucode/luci/template/toggle.ut
 endef
 
 define Package/toggle-switch/postinst

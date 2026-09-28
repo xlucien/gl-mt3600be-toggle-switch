@@ -1,6 +1,7 @@
 #!/bin/sh
 
 . /lib/functions.sh
+. /usr/share/libubox/jshn.sh
 
 TAG='mt3600be-reset'
 STATE_DIR='/tmp/mt3600be-reset'
@@ -65,20 +66,114 @@ wifi_off() {
 	wifi reload >/dev/null 2>&1
 }
 
+# 校验每个 wifi-device 的 vif 是否真的处于 UP。
+# mtwifi-cfg 的 "Exclusive lock" 实际并不互斥：并发 setup 可能静默丢掉
+# 其中一个 radio 的初始化，导致恢复后只剩一半 WiFi。
+wifi_all_vifs_up() {
+	local keys d n i u iname bad=0
+	json_cleanup >/dev/null 2>&1
+	json_load "$(ubus call network.wireless status 2>/dev/null)" || return 1
+	json_get_keys keys || return 1
+	[ -n "$keys" ] || return 1
+	for d in $keys; do
+		json_select "$d" || continue
+		json_get_var u up
+		if [ "$u" != 1 ]; then json_select ..; return 1; fi
+		if json_select ifnames; then
+			json_get_keys n
+			for i in $n; do
+				json_select "$i" || continue
+				json_get_var iname ifname
+				json_select ..
+				[ -n "$iname" ] || continue
+				ip link show "$iname" 2>/dev/null | grep -q '<[^>]*UP' || bad=1
+			done
+			json_select ..
+		fi
+		json_select ..
+	done
+	[ "$bad" = 0 ] || return 1
+}
+
+# WiFi 恢复兜底（与 mt3600be-toggle-wifi 同源）。
+#
+# 实测（GL-MT3600BE / mtwifi 闭源驱动）：
+#  - "关 WiFi → 立刻开 WiFi" 时，5G radio 的 setup 会静默挂住 —— syslog 里
+#    mtwifi-cfg 只有 "[Lock] Exclusive lock acquired!!!" 就没有下文，rai0 起不来；
+#    但间隔一会儿再执行一次 `wifi reload`，5G 通常 3 秒内就恢复。
+#  - 固件有时会把 wireless.<radio>.disabled 写回 '1' 并跨重启保留，
+#    于是下一次快照会"忠实"记录这个坏值，自我强化成"永远只有一半 WiFi"。
+#  - 因此兜底策略是：每次重试前重新套用快照 + `wifi reload`，做收敛式重试；
+#    重启只在重试全部失败后作为最后手段。
+HEAL_FLAG='/tmp/mt3600be-wifi-selfheal'
+
+wifi_apply_state() {
+	config_load mt3600be-toggle
+	config_list_foreach reset_wifi_state radio reset_restore_radio
+	uci -q commit wireless
+}
+
+wifi_heal() {
+	local i=0
+	while [ "$i" -lt 5 ]; do
+		sleep 6
+		if wifi_all_vifs_up; then
+			logger -t "$TAG" 'wifi fully up'
+			return 0
+		fi
+		i=$((i + 1))
+		logger -t "$TAG" "wifi restore incomplete, retry $i (wifi reload)"
+		wifi_apply_state
+		wifi reload >/dev/null 2>&1
+	done
+	sleep 8
+	if wifi_all_vifs_up; then
+		logger -t "$TAG" 'wifi fully up after retries'
+		return 0
+	fi
+
+	# 重试全部失败：再套一次快照（对抗 disabled 写回），然后才考虑一次性重启。
+	wifi_apply_state
+	logger -t "$TAG" 'wifi still down after 5 reload retries'
+	[ "$(uci -q get mt3600be-toggle.main.wifi_selfheal_reboot)" = 0 ] && { logger -t "$TAG" 'selfheal reboot disabled, giving up'; return 1; }
+	[ -e "$HEAL_FLAG" ] && { logger -t "$TAG" 'selfheal reboot already used this boot'; return 1; }
+	[ "$(cut -d. -f1 /proc/uptime | tr -d ' ')" -lt 300 ] && { logger -t "$TAG" 'uptime<300s, skip auto reboot'; return 1; }
+	touch "$HEAL_FLAG"
+	logger -t "$TAG" 'wifi unrecoverable, one-shot recovery reboot in 60s'
+	(
+		sleep 60
+		if wifi_all_vifs_up; then
+			logger -t "$TAG" 'wifi recovered before reboot, cancelled'
+			rm -f "$HEAL_FLAG"
+		else
+			logger -t "$TAG" 'rebooting to restore radios'
+			sync
+			sleep 2
+			reboot
+		fi
+	) &
+	return 1
+}
+
+reset_restore_radio() {
+	local entry="$1" section disabled
+	section="${entry%%=*}"
+	disabled="${entry#*=}"
+	case "$section" in ''|*[!A-Za-z0-9_]* ) return 0;; esac
+	case "$disabled" in 0|1) uci -q set "wireless.${section}.disabled=${disabled}" && found=1;; esac
+}
+
 wifi_restore() {
-	local entry section disabled pending found=0
+	local pending
+	found=0
 	config_load mt3600be-toggle
 	config_get pending reset_wifi_state pending '0'
 	[ "$pending" = 1 ] || return 1
-	reset_restore_radio() {
-		entry="$1"; section="${entry%%=*}"; disabled="${entry#*=}"
-		[ -n "$section" ] || return
-		uci -q set "wireless.${section}.disabled=${disabled:-0}" && found=1
-	}
 	config_list_foreach reset_wifi_state radio reset_restore_radio
 	[ "$found" -eq 1 ] || return 1
 	uci -q commit wireless
 	wifi reload >/dev/null 2>&1
+	wifi_heal
 	uci -q delete mt3600be-toggle.reset_wifi_state
 	uci -q commit mt3600be-toggle
 }

@@ -5,6 +5,12 @@
 不启动常驻轮询进程：滑动开关由内核 `gpio-keys` + `gpio-button-hotplug` 双边沿中断驱动，
 只在真正拨动时拉起一个很短的 shell；开机另做一次状态同步后立即退出。
 
+页面采用 GL.iNet 原厂风格重写（ucode 模板）：
+
+![拨动开关设置页](docs/luci-toggle-gl.png)
+
+旧版（自绘 JS 视图 `view/toggle/index.js`）截图：
+
 | 滑动开关 | RESET 重置键 |
 | --- | --- |
 | ![滑动开关页](docs/luci-paddle.png) | ![RESET 页](docs/luci-reset.png) |
@@ -72,7 +78,9 @@ released) exec /usr/sbin/mt3600be-toggle-apply low  ;;
 | `/usr/libexec/x1pro-delay` | `/usr/libexec/mt3600be-delay` |
 | `/etc/rc.button/reset.x1pro-stock` | `/etc/rc.button/reset.mt3600be-stock` |
 
-LuCI 侧沿用 `luci.controller.toggle` / 菜单 `admin/system/toggle` / 视图 `view/toggle/index-v100.js`。
+LuCI 侧沿用 `luci.controller.toggle` / 菜单 `admin/system/toggle`（标题「拨动开关设置」）。
+视图已由 `www/luci-static/resources/view/toggle/{index.js,index.css}` 改为
+**ucode 模板** `usr/share/ucode/luci/template/toggle.ut`（GL 原厂风格，服务端渲染，无前端构建依赖）。
 
 ## 依赖与精简
 
@@ -141,6 +149,58 @@ uci set mt3600be-toggle.main.boot_off_leds=''                      # 不强制�
 uci commit mt3600be-toggle && /etc/init.d/mt3600be-toggle restart
 ```
 
+## WiFi 开关与自愈
+
+`mt3600be-toggle-wifi` / `mt3600be-reset-control` 关 WiFi 时会把每个 `wifi-device` 的
+`disabled` 状态存进快照（UCI `mt3600be-toggle.wifi_state` / `mt3600be-toggle.reset_wifi_state`），
+开 WiFi 时按快照逐项还原。
+
+### 已知固件问题（MTK 闭源 mtwifi）
+
+反复开关 WiFi 后可能出现「只回来一半」：2.4G（`MT7993_1_1`/`ra0`）UP，
+5G（`MT7993_1_2`/`rai0`）起不来，且 `wifi up` / `network restart` 都无效。抓到的现象是
+netifd 给 5G radio 的 setup 参数里带着 `"disabled": true`，`mtwifi-cfg` 的 `handle_setup()`
+走「禁用 radio」分支后**静默返回**（退出码 0、零日志，不是崩溃，因为 `with_lock()` 没有打出
+`Crashed during locked operation`）；而 `/etc/config/wireless` 里 `MT7993_1_2.disabled` 又被
+写成 `1`，会跨重启保留并被下一次快照"忠实"记录，于是自我强化成"永远只有一半"。
+
+这是闭源 mtwifi + netifd 内部状态的问题，插件层面无法根治。
+
+### 内置兜底（已实测有效）
+
+- `wifi_all_vifs_up()`：用 `ubus call network.wireless status` + `ip link` 校验**每个** radio
+  的 vif 是否真的 UP，而不是只看退出码。
+- 恢复后每 6 s 校验一次；不完整就**重新套用快照 + `wifi reload`**，最多重试 5 次。
+  实测第一轮重试即可补齐（OFF → ON 后约 10 s 内 5G 恢复）。
+- `disabled` 每次重试前都会重新写入快照值，对抗固件回写。
+- 5 次重试仍失败才考虑**一次性恢复重启**（60 s 延迟，期间恢复则取消）。
+
+兜底开关与保护条件：
+
+```sh
+uci set mt3600be-toggle.main.wifi_selfheal_reboot='0'   # 关掉自动重启（默认 1）
+uci commit mt3600be-toggle
+```
+
+自动重启每次开机最多触发一次（标志位 `/tmp/mt3600be-wifi-selfheal`），且开机 5 分钟内不触发。
+
+> 早期版本用 `wifi up` 强制全量重启作为第一手段，实测无效：5G 的 setup 会继续挂住，
+> 且 `disabled='1'` 会被写回 uci 并跨重启保留，重启后依然只有一半 WiFi。
+> 现在 `wifi reload` 重试收敛是主路径，重启降级为最后手段。
+
+### 实机验证（2026-09-28，192.168.1.1）
+
+连续两轮 `RESET 单击（关）→ 单击（开）`：
+
+```
+20:13:35 single: wifi (wifi_off)          # uci 1_1=1 1_2=1，ra0/rai0 均 down
+20:14:11 wifi restore incomplete, retry 1 (wifi reload)
+20:14:19 wifi fully up                    # +10s：uci 0/0，ra0/rai0 均 UP
+20:15:27 single: wifi (wifi_off)          # 第二轮
+20:16:03 wifi restore incomplete, retry 1 (wifi reload)
+20:16:11 wifi fully up                    # 同样 10s 内恢复，全程无重启
+```
+
 ## 安装
 
 把本目录上传到路由器（例如 `/tmp/mt3600be-toggle`）后：
@@ -181,7 +241,8 @@ grep '|mode' /sys/kernel/debug/gpio
 - 开机同步：`mt3600be-toggle: MODE=0 (low)` → 页面显示「右侧」
 - 模拟 `ACTION=pressed`（左/高）→ `MODE=1 (high)` → `white:status` 亮度 1（灯亮）
 - 模拟 `ACTION=released`（右/低）→ `MODE=0 (low)` → 亮度 0（灯灭）
-- LuCI `系统 → 按键控制` 正常渲染，`/admin/system/toggle/api` 返回完整 JSON
+- LuCI `系统 → 拨动开关设置` 正常渲染，`/admin/system/toggle/data` 返回完整 JSON
+- RESET 单击关 WiFi → 两个 radio 均 down；再单击开 WiFi → `ra0` / `rai0` 均 UP
 
 ## 卸载
 
@@ -192,6 +253,7 @@ rm -f /usr/sbin/mt3600be-* /usr/libexec/mt3600be-* /etc/init.d/mt3600be-toggle \
       /etc/rc.button/BTN_0 /etc/config/mt3600be-toggle
 rm -rf /etc/mt3600be-toggle.d
 rm -f /usr/share/ucode/luci/controller/toggle.uc /usr/share/luci/menu.d/toggle-switch.json
+rm -f /usr/share/ucode/luci/template/toggle.ut
 rm -rf /www/luci-static/resources/view/toggle
 rm -f /tmp/luci-indexcache
 ```
@@ -213,8 +275,8 @@ usr/sbin/mt3600be-toggle-{apply,sync,wifi,proxy}
 usr/sbin/mt3600be-reset-control
 usr/libexec/mt3600be-{reset-button,delay}
 usr/share/ucode/luci/controller/toggle.uc
+usr/share/ucode/luci/template/toggle.ut    LuCI 页面（GL 原厂风格 ucode 模板）
 usr/share/luci/menu.d/toggle-switch.json
-www/luci-static/resources/view/toggle/{index.js,index.css}
 Makefile                            编入固件用（DEPENDS 见上文）
 install.sh                          实机安装脚本
 docs/                               LuCI 页面截图

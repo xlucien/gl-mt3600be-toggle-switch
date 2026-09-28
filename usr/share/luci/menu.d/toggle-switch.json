@@ -1,17 +1,33 @@
 {
     "admin/system/toggle": {
-        "title": "按键控制",
+        "title": "拨动开关设置",
         "order": 60,
         "action": {
-            "type": "view",
-            "path": "toggle/index-v100"
+            "type": "template",
+            "path": "toggle"
         }
     },
-    "admin/system/toggle/api": {
+    "admin/system/toggle/data": {
         "action": {
             "type": "function",
             "module": "luci.controller.toggle",
-            "function": "action_api"
+            "function": "action_data"
+        },
+        "leaf": true
+    },
+    "admin/system/toggle/save": {
+        "action": {
+            "type": "function",
+            "module": "luci.controller.toggle",
+            "function": "action_save"
+        },
+        "leaf": true
+    },
+    "admin/system/toggle/simulate": {
+        "action": {
+            "type": "function",
+            "module": "luci.controller.toggle",
+            "function": "action_simulate"
         },
         "leaf": true
     }

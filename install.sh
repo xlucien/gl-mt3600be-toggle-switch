@@ -27,11 +27,12 @@ chmod 0755 /usr/sbin/mt3600be-toggle-apply /usr/sbin/mt3600be-toggle-sync /usr/s
 	/etc/init.d/mt3600be-toggle /etc/rc.button/BTN_0
 cp "$BASE/usr/share/ucode/luci/controller/toggle.uc" /usr/share/ucode/luci/controller/toggle.uc
 cp "$BASE/usr/share/luci/menu.d/toggle-switch.json" /usr/share/luci/menu.d/toggle-switch.json
-cp "$BASE/www/luci-static/resources/view/toggle/index.js" /www/luci-static/resources/view/toggle/index.js
-cp "$BASE/www/luci-static/resources/view/toggle/index.js" /www/luci-static/resources/view/toggle/index-v100.js
-cp "$BASE/www/luci-static/resources/view/toggle/index.css" /www/luci-static/resources/view/toggle/index.css
+mkdir -p /usr/share/ucode/luci/template
+cp "$BASE/usr/share/ucode/luci/template/toggle.ut" /usr/share/ucode/luci/template/toggle.ut
+# 移除旧版 JS 视图（已改为 ucode 模板渲染）
+rm -rf /www/luci-static/resources/view/toggle
 chmod 0644 /usr/share/ucode/luci/controller/toggle.uc /usr/share/luci/menu.d/toggle-switch.json \
-	/www/luci-static/resources/view/toggle/index.js /www/luci-static/resources/view/toggle/index-v100.js /www/luci-static/resources/view/toggle/index.css
+	/usr/share/ucode/luci/template/toggle.ut
 rm -f /usr/lib/lua/luci/controller/toggle.lua /usr/lib/lua/luci/view/toggle/index.htm
 
 if [ ! -e /etc/config/mt3600be-toggle ]; then
@@ -49,6 +50,8 @@ uci -q get mt3600be-toggle.main.reset_triple_enabled >/dev/null || uci set mt360
 uci -q get mt3600be-toggle.main.reset_triple_action >/dev/null || uci set mt3600be-toggle.main.reset_triple_action='reboot'
 # 开机强制熄灭的灯（与滑块无关）
 uci -q get mt3600be-toggle.main.boot_off_leds >/dev/null || uci set mt3600be-toggle.main.boot_off_leds='white:status'
+# WiFi 恢复自愈重启（驱动楔死时的一次性救急，1=开 0=关）
+uci -q get mt3600be-toggle.main.wifi_selfheal_reboot >/dev/null || uci set mt3600be-toggle.main.wifi_selfheal_reboot='1'
 uci -q commit mt3600be-toggle
 
 for example in high.example low.example; do

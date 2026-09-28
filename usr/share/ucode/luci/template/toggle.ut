@@ -1,0 +1,550 @@
+{#
+ luci-app-mt3600be-toggle —— ucode 模板（GL 原厂风格）
+ 视觉对齐 GL.iNet 4.x 管理后台：浅灰底 (#f2f3f5) / 白卡 / 靛蓝强调 (#5b6efa) /
+ 胶囊「应用」按钮 / 自定义下拉组件 (.sel) / 可点击拨动开关演示图 (.swg)。
+ 模板作用域自带 dispatcher，但**没有** url()，地址一律用 dispatcher.build_url()。
+-#}
+
+{% include('header') %}
+
+<style>
+    #gl { --bg:#f2f3f5; --card:#ffffff; --line:#ebedf0; --text:#26313e; --muted:#8a94a6;
+          --accent:#5b6efa; --apply:#6a7bfa; --teal:#16b8a8; --warn:#f59e0b; --ok:#22a45d;
+          font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Roboto,sans-serif;
+          background:var(--bg); color:var(--text); padding:20px 24px; line-height:1.5;
+          -webkit-font-smoothing:antialiased; }
+    #gl * { box-sizing:border-box; }
+    #gl button { font-family:inherit; }
+
+    /* 主题防御：argon 主题对 input/select/button 强加黑边与默认圆角，压回我们的样式 */
+    #gl button, #gl input, #gl select, #gl textarea { border:0 !important; outline:0; }
+    #gl input[type=text] { border:1px solid var(--line) !important; border-radius:10px !important; }
+
+    #gl .wrap { max-width:1080px; margin:0 auto; }
+
+    #gl .pghead { margin-bottom:18px; }
+    #gl .pgtitle { font-size:20px; font-weight:700; letter-spacing:.3px; }
+    #gl .pgsub { font-size:13px; color:var(--muted); margin-top:3px; }
+
+    #gl .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
+                padding:18px 20px; margin-bottom:16px; }
+    #gl .card-h { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+    #gl .card-t { font-size:15px; font-weight:700; }
+    #gl .card-s { font-size:12px; color:var(--muted); }
+
+    /* ===== 可点击拨动开关演示图 ===== */
+    #gl .demo { display:flex; align-items:center; gap:28px; flex-wrap:wrap; }
+    #gl .swg { display:flex; width:260px; height:104px; border-radius:20px; background:#e9ebf0;
+               padding:9px; gap:9px; user-select:none; flex:none; }
+    #gl .swgHalf { flex:1; border:0; border-radius:13px; background:transparent; color:#9aa3b2;
+                   font-size:15px; font-weight:700; display:flex; flex-direction:column;
+                   align-items:center; justify-content:center; gap:5px; cursor:pointer;
+                   transition:background .2s, color .2s, box-shadow .2s; position:relative; z-index:2; }
+    #gl .swgHalf .ic { font-size:22px; line-height:1; }
+    #gl .swg.left  .left  { background:var(--accent); color:#fff; box-shadow:0 6px 16px rgba(91,110,250,.4); }
+    #gl .swg.right .right { background:var(--accent); color:#fff; box-shadow:0 6px 16px rgba(91,110,250,.4); }
+    #gl .demoInfo { flex:1; min-width:240px; }
+    #gl .demoPos { font-size:15px; font-weight:700; margin-bottom:10px; }
+    #gl .demoPos .tag { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px;
+                        font-weight:700; margin-left:6px; background:#eaf0ff; color:var(--accent); }
+    #gl .strow { display:flex; gap:18px; flex-wrap:wrap; margin-bottom:10px; }
+    #gl .st { font-size:13px; color:var(--muted); }
+    #gl .stv { font-weight:700; margin-left:4px; }
+    #gl .stv.on { color:var(--ok); }
+    #gl .stv.off { color:var(--muted); }
+    #gl .hint { font-size:12.5px; color:var(--muted); }
+
+    /* ===== 自定义下拉组件 ===== */
+    #gl .field { display:flex; align-items:center; justify-content:space-between; gap:14px;
+                 padding:12px 0; border-bottom:1px solid #f1f3f6; }
+    #gl .field:last-child { border-bottom:0; }
+    #gl .fl { font-size:14px; font-weight:600; }
+    #gl .fs { font-size:12px; color:var(--muted); margin-top:2px; }
+    #gl .sel { position:relative; display:inline-block; min-width:190px; }
+    #gl .selbtn { width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px;
+                  background:#f4f5f8; border:1px solid var(--line) !important; border-radius:10px;
+                  padding:10px 14px; font-size:14px; font-weight:600; color:var(--text); cursor:pointer; }
+    #gl .selbtn .caret { width:9px; height:9px; border-right:2px solid #9aa3b2; border-bottom:2px solid #9aa3b2;
+                         transform:rotate(45deg); transition:transform .2s; margin-top:-3px; flex:none; }
+    #gl .sel.open .selbtn .caret { transform:rotate(-135deg); margin-top:3px; }
+    #gl .menu { position:absolute; top:calc(100% + 6px); left:0; right:0; background:#fff;
+                border:1px solid var(--line); border-radius:10px; box-shadow:0 10px 28px rgba(20,30,60,.14);
+                padding:6px; z-index:50; display:none; }
+    #gl .sel.open .menu { display:block; }
+    #gl .opt { padding:9px 12px; border-radius:7px; font-size:14px; cursor:pointer; color:var(--text); }
+    #gl .opt:hover { background:#f4f5f8; }
+    #gl .opt.cur { color:var(--accent); font-weight:700; }
+
+    /* ===== 分段控件（左/右动作） ===== */
+    #gl .seg { display:inline-flex; background:#f0f1f5; border-radius:10px; padding:3px; gap:2px; }
+    #gl .seg button { border:0; background:transparent; padding:8px 18px; border-radius:8px;
+                      font-size:13px; font-weight:600; color:#8a94a6; cursor:pointer; transition:all .15s; }
+    #gl .seg button.active { background:#fff; color:var(--text); box-shadow:0 1px 3px rgba(16,24,40,.12); }
+
+    #gl input[type=text] { background:#f4f5f8; padding:9px 12px; font-family:inherit; font-size:14px;
+                           font-weight:600; color:var(--text); outline:0; transition:all .15s; }
+    #gl input[type=text]:focus { background:#fff; border-color:var(--accent) !important;
+                                 box-shadow:0 0 0 3px rgba(91,110,250,.16); }
+
+    /* ===== 底部应用栏 ===== */
+    #gl .applybar { display:flex; align-items:center; justify-content:space-between; gap:14px;
+                    background:var(--card); border:1px solid var(--line); border-radius:14px;
+                    padding:14px 20px; flex-wrap:wrap; }
+    #gl .note { font-size:13px; color:var(--warn); display:none; align-items:center; gap:6px; }
+    #gl .note i { width:7px; height:7px; border-radius:50%; background:var(--warn); display:inline-block; }
+    #gl .btnApply { border:0; background:#cfd4e6 !important; color:#fff; border-radius:999px;
+                    padding:10px 34px; font-size:14px; font-weight:700; cursor:not-allowed;
+                    transition:all .15s; }
+    #gl .btnApply.on { background:var(--apply) !important; cursor:pointer;
+                       box-shadow:0 4px 14px rgba(106,123,250,.4); }
+    #gl .btnApply.on:hover { background:#5a6bf0 !important; }
+    #gl .btnRevert { border:0; background:transparent !important; color:var(--muted); font-size:13px;
+                     font-weight:600; cursor:pointer; padding:6px 4px; }
+    #gl .btnRevert:hover { color:var(--text); }
+
+    #gl .sub { display:none; margin-top:6px; }
+    #gl .subCard { background:#fafbfc; border:1px solid #f0f2f5; border-radius:11px; padding:6px 14px; }
+
+    #gl .toast { position:fixed; left:50%; bottom:34px; transform:translateX(-50%) translateY(20px);
+                 background:rgba(38,49,62,.94); color:#fff; padding:11px 22px; border-radius:999px;
+                 font-size:13.5px; font-weight:600; opacity:0; pointer-events:none; transition:all .25s; z-index:200; }
+    #gl .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+</style>
+
+<div id="gl">
+<div class="wrap">
+
+    <div class="pghead">
+        <div class="pgtitle">拨动开关设置</div>
+        <div class="pgsub">配置物理拨动开关的功能与对应动作</div>
+    </div>
+
+    <!-- 可点击演示图 -->
+    <div class="card">
+        <div class="card-h">
+            <div class="card-t">开关演示</div>
+            <div class="card-s">点击两端模拟拨动</div>
+        </div>
+        <div class="demo">
+            <div class="swg left" id="swg">
+                <button class="swgHalf left" onclick="simulate('left')">
+                    <span class="ic">&#8592;</span><span>左拨</span>
+                </button>
+                <button class="swgHalf right" onclick="simulate('right')">
+                    <span class="ic">&#8594;</span><span>右拨</span>
+                </button>
+            </div>
+            <div class="demoInfo">
+                <div class="demoPos">当前位置：<span class="tag" id="demoPos">左侧</span></div>
+                <div class="strow">
+                    <span class="st">蓝灯<b class="stv on" id="blueSt">亮</b></span>
+                    <span class="st">白灯<b class="stv off" id="whiteSt">灭</b></span>
+                </div>
+                <div class="hint">左拨 = 物理 HIGH；右拨 = 物理 LOW。点击开关两端可实时模拟拨动，对应指示灯会随之变化。</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 拨动开关功能 -->
+    <div class="card">
+        <div class="card-h">
+            <div class="card-t">拨动开关功能</div>
+        </div>
+        <div class="field">
+            <div><div class="fl">功能选项</div><div class="fs">选择滑块拨动时要执行的功能</div></div>
+            <div class="sel" id="funcSel">
+                <button class="selbtn" onclick="toggleSel('funcSel')">
+                    <span id="funcLabel">无功能</span><span class="caret"></span>
+                </button>
+                <div class="menu" id="funcMenu">
+                    <div class="opt" data-v="none"  onclick="pickFunc('none')">无功能</div>
+                    <div class="opt" data-v="proxy" onclick="pickFunc('proxy')">代理</div>
+                    <div class="opt" data-v="wifi"  onclick="pickFunc('wifi')">Wi-Fi</div>
+                    <div class="opt" data-v="led"   onclick="pickFunc('led')">LED</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 无功能 -->
+        <div class="sub" id="subNone">
+            <div class="subCard">
+                <div class="hint" style="padding:10px 0">当前未启用任何功能，滑块仅作位置指示。</div>
+            </div>
+        </div>
+
+        <!-- 代理 -->
+        <div class="sub" id="subProxy">
+            <div class="subCard">
+                <div class="field">
+                    <div><div class="fl">代理目标</div><div class="fs">选择受控的代理插件</div></div>
+                    <div class="sel" id="proxySel">
+                        <button class="selbtn" onclick="toggleSel('proxySel')">
+                            <span id="proxyLabel">自动</span><span class="caret"></span>
+                        </button>
+                        <div class="menu" id="proxyMenu">
+                            <div class="opt" data-v="auto"      onclick="pickProxy('auto')">自动</div>
+                            <div class="opt" data-v="passwall"  onclick="pickProxy('passwall')">PassWall</div>
+                            <div class="opt" data-v="passwall2" onclick="pickProxy('passwall2')">PassWall2</div>
+                            <div class="opt" data-v="openclash" onclick="pickProxy('openclash')">OpenClash</div>
+                            <div class="opt" data-v="ssrplus"   onclick="pickProxy('ssrplus')">SSR Plus+</div>
+                            <div class="opt" data-v="nikki"     onclick="pickProxy('nikki')">Nikki</div>
+                            <div class="opt" data-v="daed"      onclick="pickProxy('daed')">Daed</div>
+                            <div class="opt" data-v="homeproxy" onclick="pickProxy('homeproxy')">HomeProxy</div>
+                            <div class="opt" data-v="mihomo"    onclick="pickProxy('mihomo')">Mihomo</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="field">
+                    <div><div class="fl">左拨动作</div></div>
+                    <div class="seg" id="proxyLeftSeg">
+                        <button data-v="1" onclick="pickSeg('proxy_left_action','1',this)">启动代理</button>
+                        <button data-v="0" onclick="pickSeg('proxy_left_action','0',this)">关闭代理</button>
+                    </div>
+                </div>
+                <div class="field">
+                    <div><div class="fl">右拨动作</div></div>
+                    <div class="seg" id="proxyRightSeg">
+                        <button data-v="1" onclick="pickSeg('proxy_right_action','1',this)">启动代理</button>
+                        <button data-v="0" onclick="pickSeg('proxy_right_action','0',this)">关闭代理</button>
+                    </div>
+                </div>
+                <div class="hint" style="padding:8px 0 4px">仅当所选代理插件已安装并配置时生效。</div>
+            </div>
+        </div>
+
+        <!-- Wi-Fi -->
+        <div class="sub" id="subWifi">
+            <div class="subCard">
+                <div class="field">
+                    <div><div class="fl">左拨动作</div></div>
+                    <div class="seg" id="wifiLeftSeg">
+                        <button data-v="1" onclick="pickSeg('wifi_left_action','1',this)">开启无线</button>
+                        <button data-v="0" onclick="pickSeg('wifi_left_action','0',this)">关闭无线</button>
+                    </div>
+                </div>
+                <div class="field">
+                    <div><div class="fl">右拨动作</div></div>
+                    <div class="seg" id="wifiRightSeg">
+                        <button data-v="1" onclick="pickSeg('wifi_right_action','1',this)">开启无线</button>
+                        <button data-v="0" onclick="pickSeg('wifi_right_action','0',this)">关闭无线</button>
+                    </div>
+                </div>
+                <div class="hint" style="padding:8px 0 4px">启用后会先快照当前 WiFi 状态，右拨恢复、左拨关闭。</div>
+            </div>
+        </div>
+
+        <!-- LED -->
+        <div class="sub" id="subLed">
+            <div class="subCard">
+                <div class="field">
+                    <div><div class="fl">控制的灯</div><div class="fs">LED 名称，支持空格分隔多灯</div></div>
+                    <input type="text" id="ledName" onchange="onText('led_name', this.value)">
+                </div>
+                <div class="field">
+                    <div><div class="fl">左拨动作</div></div>
+                    <div class="seg" id="ledLeftSeg">
+                        <button data-v="1" onclick="pickSeg('led_left_action','1',this)">打开灯光</button>
+                        <button data-v="0" onclick="pickSeg('led_left_action','0',this)">关闭灯光</button>
+                    </div>
+                </div>
+                <div class="field">
+                    <div><div class="fl">右拨动作</div></div>
+                    <div class="seg" id="ledRightSeg">
+                        <button data-v="1" onclick="pickSeg('led_right_action','1',this)">打开灯光</button>
+                        <button data-v="0" onclick="pickSeg('led_right_action','0',this)">关闭灯光</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RESET 重置键 -->
+    <div class="card">
+        <div class="card-h">
+            <div class="card-t">RESET 重置键</div>
+            <div class="card-s">多击手势，独立于滑块</div>
+        </div>
+        <div class="field">
+            <div><div class="fl">单击</div></div>
+            <div class="seg" id="resetSingleSeg">
+                <button data-v="led"   onclick="pickReset('reset_single_action','led',this)">蓝灯</button>
+                <button data-v="wifi"  onclick="pickReset('reset_single_action','wifi',this)">无线</button>
+                <button data-v="reboot" onclick="pickReset('reset_single_action','reboot',this)">重启</button>
+            </div>
+        </div>
+        <div class="field">
+            <div><div class="fl">双击</div></div>
+            <div class="seg" id="resetDoubleSeg">
+                <button data-v="led"   onclick="pickReset('reset_double_action','led',this)">蓝灯</button>
+                <button data-v="wifi"  onclick="pickReset('reset_double_action','wifi',this)">无线</button>
+                <button data-v="reboot" onclick="pickReset('reset_double_action','reboot',this)">重启</button>
+            </div>
+        </div>
+        <div class="field">
+            <div><div class="fl">三击</div></div>
+            <div class="seg" id="resetTripleSeg">
+                <button data-v="led"   onclick="pickReset('reset_triple_action','led',this)">蓝灯</button>
+                <button data-v="wifi"  onclick="pickReset('reset_triple_action','wifi',this)">无线</button>
+                <button data-v="reboot" onclick="pickReset('reset_triple_action','reboot',this)">重启</button>
+            </div>
+        </div>
+        <div class="hint" style="padding-top:6px">多击需在 1 秒内完成。动作「蓝灯」切换蓝灯亮灭、「无线」开关 WiFi、「重启」重启设备。</div>
+    </div>
+
+    <!-- 底部应用栏 -->
+    <div class="applybar">
+        <div style="display:flex;align-items:center;gap:14px">
+            <span class="note" id="dirtyNote"><i></i>有未保存的修改</span>
+            <button class="btnRevert" onclick="doRevert()">放弃修改</button>
+        </div>
+        <button class="btnApply" id="btnApply" onclick="doSave()" disabled>应用</button>
+    </div>
+
+</div>
+<div class="toast" id="toast"></div>
+</div>
+
+{% include('footer') %}
+
+<script>
+var INIT = {
+  switch_position:'left', blue_led:'on', white_led:'off',
+  led_enabled:false, led_left_action:true, led_right_action:false, led_name:'blue:status',
+  wifi_enabled:false, wifi_left_action:false, wifi_right_action:true,
+  proxy_enabled:false, proxy_target:'auto', proxy_left_action:false, proxy_right_action:true,
+  reset_single_enabled:false, reset_single_action:'wifi',
+  reset_double_enabled:false, reset_double_action:'wifi',
+  reset_triple_enabled:false, reset_triple_action:'reboot'
+};
+var dataUrl = '{{ dispatcher.build_url("admin", "system", "toggle", "data") }}';
+var saveUrl = '{{ dispatcher.build_url("admin", "system", "toggle", "save") }}';
+var simUrl  = '{{ dispatcher.build_url("admin", "system", "toggle", "simulate") }}';
+
+var CFG = Object.assign({}, INIT);
+var SAVED = Object.assign({}, INIT);
+var firstLoad = true;
+var REFRESH_MS = 3000;
+
+function $(id){ return document.getElementById(id); }
+function toast(msg){
+    var el = $('toast'); el.textContent = msg; el.classList.add('show');
+    clearTimeout(el._t); el._t = setTimeout(function(){ el.classList.remove('show'); }, 2200);
+}
+
+var FUNC_LABEL = { none:'无功能', proxy:'代理', wifi:'Wi-Fi', led:'LED' };
+var PROXY_LABEL = { auto:'自动', passwall:'PassWall', passwall2:'PassWall2', openclash:'OpenClash',
+                    ssrplus:'SSR Plus+', nikki:'Nikki', daed:'Daed', homeproxy:'HomeProxy', mihomo:'Mihomo' };
+
+function deriveFunc(){
+    if(CFG.proxy_enabled) return 'proxy';
+    if(CFG.wifi_enabled)  return 'wifi';
+    if(CFG.led_enabled)   return 'led';
+    return 'none';
+}
+function applyFunc(f){
+    CFG.led_enabled   = (f === 'led');
+    CFG.wifi_enabled  = (f === 'wifi');
+    CFG.proxy_enabled = (f === 'proxy');
+}
+
+function setSegActive(segId, val){
+    var seg = $(segId); if(!seg) return;
+    var btns = seg.querySelectorAll('button');
+    for(var i=0;i<btns.length;i++){
+        btns[i].classList.toggle('active', btns[i].getAttribute('data-v') === String(val));
+    }
+}
+function markSelCur(selId, val){
+    var menu = $(selId); if(!menu) return;
+    var opts = menu.querySelectorAll('.opt');
+    for(var i=0;i<opts.length;i++){
+        opts[i].classList.toggle('cur', opts[i].getAttribute('data-v') === String(val));
+    }
+}
+
+function renderSub(f){
+    $('subNone').style.display  = f === 'none'  ? 'block' : 'none';
+    $('subProxy').style.display = f === 'proxy' ? 'block' : 'none';
+    $('subWifi').style.display  = f === 'wifi'  ? 'block' : 'none';
+    $('subLed').style.display   = f === 'led'   ? 'block' : 'none';
+}
+
+function applyUI(){
+    var f = deriveFunc();
+    $('funcLabel').textContent = FUNC_LABEL[f];
+    markSelCur('funcMenu', f);
+    renderSub(f);
+
+    // 演示图位置
+    var sw = $('swg');
+    sw.classList.remove('left','right');
+    sw.classList.add(CFG.switch_position === 'left' ? 'left' : 'right');
+    $('demoPos').textContent = CFG.switch_position === 'left' ? '左侧' : '右侧';
+
+    // 实时状态
+    $('blueSt').textContent  = CFG.blue_led === 'on' ? '亮' : '灭';
+    $('blueSt').className    = 'stv ' + (CFG.blue_led === 'on' ? 'on' : 'off');
+    $('whiteSt').textContent = CFG.white_led === 'on' ? '亮' : '灭';
+    $('whiteSt').className   = 'stv ' + (CFG.white_led === 'on' ? 'on' : 'off');
+
+    // 代理目标
+    $('proxyLabel').textContent = PROXY_LABEL[CFG.proxy_target] || '自动';
+    markSelCur('proxyMenu', CFG.proxy_target);
+
+    // 分段动作
+    setSegActive('proxyLeftSeg',  CFG.proxy_left_action  ? '1' : '0');
+    setSegActive('proxyRightSeg', CFG.proxy_right_action ? '1' : '0');
+    setSegActive('wifiLeftSeg',   CFG.wifi_left_action   ? '1' : '0');
+    setSegActive('wifiRightSeg',  CFG.wifi_right_action  ? '1' : '0');
+    setSegActive('ledLeftSeg',    CFG.led_left_action    ? '1' : '0');
+    setSegActive('ledRightSeg',   CFG.led_right_action   ? '1' : '0');
+    setSegActive('resetSingleSeg',  CFG.reset_single_action);
+    setSegActive('resetDoubleSeg',  CFG.reset_double_action);
+    setSegActive('resetTripleSeg',  CFG.reset_triple_action);
+
+    $('ledName').value = CFG.led_name || 'blue:status';
+
+    updateDirty();
+}
+
+/* ===== 自定义下拉 ===== */
+function toggleSel(id){
+    var s = $(id);
+    var willOpen = !s.classList.contains('open');
+    closeSels();
+    if(willOpen) s.classList.add('open');
+}
+function closeSels(){
+    var all = document.querySelectorAll('#gl .sel');
+    for(var i=0;i<all.length;i++) all[i].classList.remove('open');
+}
+document.addEventListener('click', function(e){
+    if(!e.target.closest('#gl .sel')) closeSels();
+});
+
+function pickFunc(v){
+    closeSels();
+    applyFunc(v);
+    markDirty();
+}
+function pickProxy(v){
+    closeSels();
+    CFG.proxy_target = v;
+    markDirty();
+}
+function pickSeg(key, val, btn){
+    CFG[key] = (val === '1');
+    setSegActive(btn.parentNode.id, val);
+    markDirty();
+}
+function pickReset(key, val, btn){
+    CFG[key] = val;
+    setSegActive(btn.parentNode.id, val);
+    markDirty();
+}
+function onText(key, val){ CFG[key] = val; markDirty(); }
+
+/* ===== 脏状态 ===== */
+function isDirty(){
+    var keys = Object.keys(SAVED);
+    for(var i=0;i<keys.length;i++){
+        if(JSON.stringify(CFG[keys[i]]) !== JSON.stringify(SAVED[keys[i]])) return true;
+    }
+    return false;
+}
+function updateDirty(){
+    var d = isDirty();
+    var btn = $('btnApply');
+    if(d){ btn.classList.add('on'); btn.disabled = false; $('dirtyNote').style.display = 'inline-flex'; }
+    else { btn.classList.remove('on'); btn.disabled = true;  $('dirtyNote').style.display = 'none'; }
+}
+function markDirty(){ updateDirty(); }
+
+function doRevert(){ CFG = Object.assign({}, SAVED); applyUI(); toast('已放弃修改'); }
+
+/* ===== 保存 / 模拟 / 轮询 ===== */
+function doSave(){
+    var fd = new FormData();
+    fd.append('led_enabled',  CFG.led_enabled  ? '1' : '0');
+    fd.append('wifi_enabled', CFG.wifi_enabled ? '1' : '0');
+    fd.append('proxy_enabled',CFG.proxy_enabled? '1' : '0');
+    fd.append('proxy_target', CFG.proxy_target);
+    fd.append('led_left_action',  CFG.led_left_action  ? '1' : '0');
+    fd.append('led_right_action', CFG.led_right_action ? '1' : '0');
+    fd.append('wifi_left_action',  CFG.wifi_left_action  ? '1' : '0');
+    fd.append('wifi_right_action', CFG.wifi_right_action ? '1' : '0');
+    fd.append('proxy_left_action',  CFG.proxy_left_action  ? '1' : '0');
+    fd.append('proxy_right_action', CFG.proxy_right_action ? '1' : '0');
+    fd.append('led_name', CFG.led_name);
+    fd.append('reset_single_enabled', CFG.reset_single_enabled ? '1' : '0');
+    fd.append('reset_single_action',  CFG.reset_single_action);
+    fd.append('reset_double_enabled', CFG.reset_double_enabled ? '1' : '0');
+    fd.append('reset_double_action',  CFG.reset_double_action);
+    fd.append('reset_triple_enabled', CFG.reset_triple_enabled ? '1' : '0');
+    fd.append('reset_triple_action',  CFG.reset_triple_action);
+    fetch(saveUrl, { method:'POST', body:fd, credentials:'same-origin' })
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+            if(j && j.success){ SAVED = Object.assign({}, CFG); updateDirty(); toast('已应用'); poll(true); }
+            else { toast('保存失败：' + (j && j.error ? j.error : '未知错误')); }
+        })
+        .catch(function(){ toast('保存请求失败'); });
+}
+
+function simulate(side){
+    fetch(simUrl, { method:'POST', body:new URLSearchParams({ side:side }), credentials:'same-origin' })
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+            if(j && j.success){ mergeLive(j.data); applyUI();
+                toast(side === 'left' ? '已模拟拨到左侧' : '已模拟拨到右侧'); }
+            else { toast('模拟失败'); }
+        })
+        .catch(function(){ toast('模拟请求失败'); });
+}
+
+function mergeAll(d){
+    for(var k in d){ if(d[k] !== undefined && d[k] !== null) CFG[k] = d[k]; }
+    SAVED = Object.assign({}, CFG);
+}
+function mergeLive(d){
+    CFG.switch_position = d.switch_position;
+    CFG.blue_led = d.blue_led;
+    CFG.white_led = d.white_led;
+    if(!isDirty()){
+        CFG.led_enabled   = d.led_enabled;
+        CFG.wifi_enabled  = d.wifi_enabled;
+        CFG.proxy_enabled = d.proxy_enabled;
+        CFG.led_left_action   = d.led_left_action;
+        CFG.led_right_action  = d.led_right_action;
+        CFG.wifi_left_action  = d.wifi_left_action;
+        CFG.wifi_right_action = d.wifi_right_action;
+        CFG.proxy_left_action  = d.proxy_left_action;
+        CFG.proxy_right_action = d.proxy_right_action;
+        CFG.proxy_target  = d.proxy_target;
+        CFG.led_name      = d.led_name;
+        CFG.reset_single_enabled = d.reset_single_enabled;
+        CFG.reset_single_action  = d.reset_single_action;
+        CFG.reset_double_enabled = d.reset_double_enabled;
+        CFG.reset_double_action  = d.reset_double_action;
+        CFG.reset_triple_enabled = d.reset_triple_enabled;
+        CFG.reset_triple_action  = d.reset_triple_action;
+        SAVED = Object.assign({}, CFG);
+    }
+}
+
+function poll(force){
+    fetch(dataUrl, { credentials:'same-origin' })
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+            if(j && j.success && j.data){
+                if(firstLoad){ mergeAll(j.data); firstLoad = false; }
+                else { mergeLive(j.data); }
+                applyUI();
+            }
+        })
+        .catch(function(){});
+}
+
+poll();
+setInterval(function(){ poll(); }, REFRESH_MS);
+</script>
