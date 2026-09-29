@@ -53,6 +53,34 @@ function proxy_status(target) {
     return result;
 }
 
+// 「可控制」面板用：逐个检测已安装的代理插件及其当前运行状态。
+// 第一个条目固定是「自动」，表示由脚本按运行/已配置/已安装依次推断。
+// 注意：ucode 里不能写 `for (let x in [ 'a', 'b' ])` 直接遍历数组字面量（不生效），
+// 必须先把数组放进变量再遍历。
+function proxy_list() {
+    let targets = [ 'passwall', 'passwall2', 'openclash', 'ssrplus', 'nikki', 'daed', 'homeproxy', 'mihomo' ];
+    let list = [{ target: 'auto', state: 'auto', configured: false, running: false }];
+    for (let target in targets)
+        push(list, proxy_status(target));
+    return list;
+}
+
+// 可选的 LED 列表，来自 /sys/class/leds（本机是 blue:status / white:status）。
+function led_list() {
+    let list = [];
+    let dir = fs.opendir('/sys/class/leds');
+    if (dir) {
+        let entry;
+        while ((entry = dir.read()) != null) {
+            let name = (type(entry) == 'object') ? entry.name : entry;
+            if (name == null) continue;
+            if (fs.access(`/sys/class/leds/${name}/brightness`)) push(list, `${name}`);
+        }
+        dir.close();
+    }
+    return length(list) ? list : [ 'blue:status', 'white:status' ];
+}
+
 function physical_state() {
     return trim(fs.readfile('/tmp/mt3600be-toggle-state') ?? '') == '1' ? '1' : '0';
 }
@@ -102,6 +130,8 @@ function full_data() {
         proxy_left_action: cfg_bool('proxy_high_action', '0'),
         proxy_right_action: cfg_bool('proxy_low_action', '1'),
         proxy_status: proxy_status(),
+        proxies: proxy_list(),
+        leds: led_list(),
         reset_single_enabled: cfg_bool('reset_single_enabled', '0'),
         reset_single_action: cfg_get('reset_single_action', 'wifi'),
         reset_double_enabled: cfg_bool('reset_double_enabled', '0'),

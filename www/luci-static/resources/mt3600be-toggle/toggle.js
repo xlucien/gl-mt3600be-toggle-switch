@@ -9,13 +9,23 @@
         proxy_enabled: false, proxy_target: 'auto', proxy_left_action: false, proxy_right_action: true,
         reset_single_enabled: false, reset_single_action: 'wifi',
         reset_double_enabled: false, reset_double_action: 'wifi',
-        reset_triple_enabled: false, reset_triple_action: 'reboot'
+        reset_triple_enabled: false, reset_triple_action: 'reboot',
+        leds: ['blue:status', 'white:status'],
+        proxies: [{ target: 'auto', state: 'auto', configured: false, running: false, label: '自动检测' }]
     };
 
     var FUNC_LABEL = { none: '无功能', proxy: '代理', wifi: 'Wi-Fi', led: 'LED' };
-    var PROXY_LABEL = {
+    var PROXY_NAME = {
         auto: '自动', passwall: 'PassWall', passwall2: 'PassWall2', openclash: 'OpenClash',
         ssrplus: 'SSR Plus+', nikki: 'Nikki', daed: 'Daed', homeproxy: 'HomeProxy', mihomo: 'Mihomo'
+    };
+    var PROXY_STATE = {
+        running: { t: '运行中', c: 'running' },
+        installed: { t: '未启用', c: 'idle' },
+        error: { t: '配置已开·未运行', c: 'err' },
+        conflict: { t: '检测到多个', c: 'conf' },
+        not_installed: { t: '未安装', c: 'idle' },
+        auto: { t: '自动选择', c: 'idle' }
     };
     var ACT_LABEL = {
         wifi: { on: '开启无线', off: '关闭无线' },
@@ -24,17 +34,19 @@
     };
     var RESET_GESTURES = ['single', 'double', 'triple'];
     var REFRESH_MS = 3000;
-    var SIM_HOLD_MS = 3000;
 
     function clone(o) { var r = {}, k; for (k in o) r[k] = o[k]; return r; }
 
     var CFG = clone(INIT);
     var SAVED = clone(INIT);
     var firstLoad = true;
-    var simSide = null, simUntil = 0;
-    var dataUrl = '', saveUrl = '', simUrl = '';
+    var dataUrl = '', saveUrl = '';
 
     function $(id) { return document.getElementById(id); }
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
 
     function toast(msg) {
         var el = $('toast');
@@ -74,16 +86,16 @@
         if (f === 'none' || !ACT_LABEL[f]) return '无动作';
         return on ? ACT_LABEL[f].on : ACT_LABEL[f].off;
     }
-    function capText(f) {
-        if (f === 'proxy') return '代理程序启停 · ' + (PROXY_LABEL[CFG.proxy_target] || '自动');
-        if (f === 'wifi') return '2.4G / 5G 无线开关';
-        if (f === 'led') return 'LED 亮灭 · ' + (CFG.led_name || 'blue:status');
-        return '滑块仅作位置指示';
-    }
     function resetVal(g) {
         if (!CFG['reset_' + g + '_enabled']) return 'disabled';
         var a = CFG['reset_' + g + '_action'];
         return (a === 'led' || a === 'wifi' || a === 'reboot') ? a : 'wifi';
+    }
+    /* led_name 可能是空格分隔的多个灯 */
+    function ledList(name) {
+        var out = [], parts = String(name || '').split(/\s+/), i;
+        for (i = 0; i < parts.length; i++) if (parts[i]) out.push(parts[i]);
+        return out;
     }
 
     /* ===== 渲染辅助 ===== */
@@ -103,10 +115,10 @@
     }
 
     function renderActSeg() {
-        var f = deriveFunc();
-        if (f === 'none') { $('actSeg').innerHTML = ''; return; }
-        var L = ACT_LABEL[f], cur = leftAction(f), seg = $('actSeg');
+        var f = deriveFunc(), seg = $('actSeg');
         seg.innerHTML = '';
+        if (f === 'none') return;
+        var L = ACT_LABEL[f], cur = leftAction(f);
         [{ v: '1', t: L.on }, { v: '0', t: L.off }].forEach(function (b) {
             var btn = document.createElement('button');
             btn.type = 'button';
@@ -119,37 +131,142 @@
         $('rightAuto').textContent = cur ? L.off : L.on;
     }
 
+    /* 代理下拉：只列出检测到的插件 */
+    function renderProxySel() {
+        var sel = $('proxySel'), menu = $('proxyMenu');
+        var list = (CFG.proxies && CFG.proxies.length) ? CFG.proxies : INIT.proxies;
+        var html = '', i, p;
+        for (i = 0; i < list.length; i++) {
+            p = list[i];
+            var nm = PROXY_NAME[p.target] || p.target;
+            var st = PROXY_STATE[p.state] || PROXY_STATE.installed;
+            var tag = (p.state === 'running') ? '（运行中）'
+                : (p.state === 'installed' ? '（未启用）'
+                    : (p.state === 'error' ? '（异常）' : ''));
+            html += '<div class="opt" data-v="' + esc(p.target) + '" onclick="pickProxy(\'' + esc(p.target) + '\')">'
+                + esc(nm) + esc(tag) + '</div>';
+        }
+        menu.innerHTML = html;
+        var curName = PROXY_NAME[CFG.proxy_target] || CFG.proxy_target;
+        $('proxyLabel').textContent = curName;
+        markSelCur('proxyMenu', CFG.proxy_target);
+    }
+
+    /* 多选灯：已有灯用胶囊点选，也可直接编辑输入框 */
+    function renderLedPicks() {
+        var box = $('ledPicks'), list = CFG.leds || [], picked = ledList(CFG.led_name);
+        var html = '', i;
+        for (i = 0; i < list.length; i++) {
+            var nm = list[i];
+            var has = picked.indexOf(nm) >= 0;
+            html += '<span class="ledpick' + (has ? ' on' : '') + '" data-led="' + esc(nm) + '">'
+                + esc(nm) + '</span>';
+        }
+        box.innerHTML = html;
+        var chips = box.querySelectorAll('.ledpick'), j;
+        for (j = 0; j < chips.length; j++) {
+            chips[j].onclick = function () { toggleLed(this.getAttribute('data-led')); };
+        }
+    }
+    function toggleLed(name) {
+        var picked = ledList(CFG.led_name), idx = picked.indexOf(name);
+        if (idx >= 0) picked.splice(idx, 1); else picked.push(name);
+        CFG.led_name = picked.join(' ');
+        $('ledName').value = CFG.led_name;
+        renderLedPicks();
+        applyUI();
+        markDirty();
+    }
+
+    /* 右栏「可控制」能力卡片 */
+    function renderCap(f) {
+        var box = $('capBox'), html = '';
+
+        if (f === 'none') {
+            box.innerHTML = '<div class="cap-empty">未选择功能，滑块仅作位置指示。</div>';
+            return;
+        }
+
+        if (f === 'wifi') {
+            box.innerHTML =
+                '<div class="cap">' +
+                '<div class="cap-h"><span class="cap-n">无线网络</span><span class="pill idle">2.4G + 5G</span></div>' +
+                '<div class="cap-d">左拨：' + esc(actText(f, leftAction(f))) + '　·　右拨：' + esc(actText(f, !leftAction(f))) +
+                '<br>关闭时会保存当前各射频的启停状态，重新打开时按快照恢复（含失败自愈重试）。</div></div>';
+            return;
+        }
+
+        if (f === 'led') {
+            var picked = ledList(CFG.led_name), names = '', i;
+            for (i = 0; i < picked.length; i++)
+                names += '<span class="pill idle" style="margin-right:6px">' + esc(picked[i]) + '</span>';
+            if (!names) names = '<span class="pill idle">未指定</span>';
+            box.innerHTML =
+                '<div class="cap">' +
+                '<div class="cap-h"><span class="cap-n">受控 LED</span></div>' +
+                '<div class="cap-d" style="margin-bottom:7px">' + names + '</div>' +
+                '<div class="cap-d">左拨：' + esc(actText(f, leftAction(f))) + '　·　右拨：' + esc(actText(f, !leftAction(f))) +
+                '<br>可点击多个灯同时控制，也可在上方输入框直接写灯名。</div></div>';
+            return;
+        }
+
+        /* 代理：把每个检测到的插件都列出来并标注可控性 */
+        var list = (CFG.proxies && CFG.proxies.length) ? CFG.proxies : INIT.proxies;
+        for (var k = 0; k < list.length; k++) {
+            var p = list[k];
+            var nm = PROXY_NAME[p.target] || p.target;
+            var st = PROXY_STATE[p.state] || PROXY_STATE.installed;
+            var ctrl = '可启动 / 可关闭';
+            if (p.target === 'auto')
+                ctrl = '按运行状态自动选择，可由滑块启停';
+            else if (p.state === 'not_installed')
+                ctrl = '未安装，无法控制';
+            else if (p.state === 'conflict')
+                ctrl = '检测到多个插件同时运行，无法确定控制目标';
+            var cls = p.state === 'running' ? 'ok'
+                : (p.state === 'not_installed' ? 'bad' : (p.state === 'conflict' ? 'warn' : ''));
+            html += '<div class="cap ' + cls + '">' +
+                '<div class="cap-h"><span class="cap-n">' + esc(nm) + '</span>' +
+                '<span class="pill ' + st.c + '">' + st.t + '</span>' +
+                (CFG.proxy_target === p.target ? '<span class="pill running">当前所选</span>' : '') +
+                '</div>' +
+                '<div class="cap-d">' + esc(ctrl) + '</div></div>';
+        }
+        box.innerHTML = html;
+    }
+
     function applyUI() {
         syncDerived(CFG);
         var f = deriveFunc(), la = leftAction(f);
 
+        /* 左栏可见性 */
         $('funcLabel').textContent = FUNC_LABEL[f];
         markSelCur('funcMenu', f);
-        $('proxySel').style.display = (f === 'proxy') ? 'inline-block' : 'none';
-        $('proxyLabel').textContent = PROXY_LABEL[CFG.proxy_target] || '自动';
-        markSelCur('proxyMenu', CFG.proxy_target);
-        $('capText').textContent = capText(f);
 
-        $('cfgBox').style.display = (f === 'none') ? 'none' : 'block';
-        $('ledNameRow').style.display = (f === 'led') ? 'flex' : 'none';
-        $('ledName').value = CFG.led_name || 'blue:status';
+        var isLed = (f === 'led'), isProxy = (f === 'proxy'), isNone = (f === 'none');
+        $('ledNameItem').style.display = isLed ? 'block' : 'none';
+        $('actItem').style.display = isNone ? 'none' : 'block';
+        $('rightItem').style.display = isNone ? 'none' : 'block';
+        if (isLed) renderLedPicks();
         renderActSeg();
 
-        /* 演示图位置：模拟期间显示模拟方向，之后回到真实 GPIO 电平 */
-        var sim = !!(simSide && Date.now() < simUntil);
-        var pos = sim ? simSide : CFG.switch_position;
-        var sw = $('swg');
-        sw.classList.remove('left', 'right', 'sim');
-        sw.classList.add(pos === 'left' ? 'left' : 'right');
-        if (sim) sw.classList.add('sim');
-        $('demoPos').textContent = (pos === 'left' ? '左侧' : '右侧') + (sim ? '（模拟）' : '');
-        $('demoPos').className = 'tag' + (sim ? ' sim' : '');
+        /* 下拉：代理目标只在选「代理」时出现，紧邻功能下拉 */
+        var proxyItem = $('proxyItem');
+        if (proxyItem) proxyItem.style.display = isProxy ? 'block' : 'none';
+        if (isProxy) renderProxySel();
 
-        /* 左右拨分别执行什么 */
+        renderCap(f);
+
+        /* 演示图位置（纯展示，无模拟） */
+        var sw = $('swg');
+        sw.classList.remove('left', 'right');
+        sw.classList.add(CFG.switch_position === 'left' ? 'left' : 'right');
+        $('demoPos').textContent = CFG.switch_position === 'left' ? '左侧' : '右侧';
+
         $('actLeft').textContent = actText(f, la);
         $('actRight').textContent = actText(f, !la);
-        $('actLeft').className = 'aval' + (f === 'none' ? ' none' : '');
-        $('actRight').className = 'aval' + (f === 'none' ? ' none' : '');
+        $('actLeft').className = 'aval' + (isNone ? ' none' : '');
+        $('actRight').className = 'aval' + (isNone ? ' none' : '');
 
         $('blueSt').textContent = CFG.blue_led === 'on' ? '亮' : '灭';
         $('blueSt').className = 'stv ' + (CFG.blue_led === 'on' ? 'on' : 'off');
@@ -160,6 +277,7 @@
             setSegActive('reset' + g.charAt(0).toUpperCase() + g.slice(1) + 'Seg', resetVal(g));
         });
 
+        if (document.activeElement !== $('ledName')) $('ledName').value = CFG.led_name || '';
         updateDirty();
     }
 
@@ -188,7 +306,7 @@
         setSegActive(btn.parentNode.id, val);
         markDirty();
     }
-    function onText(key, val) { CFG[key] = val; applyUI(); markDirty(); }
+    function onText(key, val) { CFG[key] = val; renderLedPicks(); applyUI(); markDirty(); }
 
     /* ===== 脏状态 ===== */
     function isDirty() {
@@ -210,7 +328,7 @@
     function markDirty() { updateDirty(); }
     function doRevert() { CFG = clone(SAVED); applyUI(); toast('已放弃修改'); }
 
-    /* ===== 保存 / 模拟 / 轮询 ===== */
+    /* ===== 保存 / 轮询 ===== */
     function doSave() {
         var fd = new FormData();
         fd.append('led_enabled', CFG.led_enabled ? '1' : '0');
@@ -232,33 +350,12 @@
             .then(function (r) { return r.json(); })
             .then(function (j) {
                 if (j && j.success) {
-                    SAVED = clone(CFG); updateDirty(); toast('已应用'); poll();
+                    SAVED = clone(CFG); updateDirty(); toast('已保存'); poll();
                 } else {
                     toast('保存失败：' + ((j && j.error) ? j.error : '未知错误'));
                 }
             })
             .catch(function () { toast('保存请求失败'); });
-    }
-
-    function simulate(side) {
-        var sw = $('swg');
-        sw.classList.add('busy');
-        simSide = side; simUntil = Date.now() + SIM_HOLD_MS;
-        applyUI();
-        fetch(simUrl, { method: 'POST', body: new URLSearchParams({ side: side }), credentials: 'same-origin' })
-            .then(function (r) { return r.json(); })
-            .then(function (j) {
-                sw.classList.remove('busy');
-                if (j && j.success) {
-                    mergeLive(j.data); applyUI();
-                    toast(side === 'left' ? '已模拟拨到左侧' : '已模拟拨到右侧');
-                } else {
-                    simUntil = 0; applyUI(); toast('模拟失败');
-                }
-            })
-            .catch(function () {
-                sw.classList.remove('busy'); simUntil = 0; applyUI(); toast('模拟请求失败');
-            });
     }
 
     function mergeAll(d) {
@@ -270,6 +367,8 @@
         CFG.switch_position = d.switch_position;
         CFG.blue_led = d.blue_led;
         CFG.white_led = d.white_led;
+        if (d.proxies) CFG.proxies = d.proxies;
+        if (d.leds) CFG.leds = d.leds;
         if (isDirty()) return;
         CFG.led_enabled = d.led_enabled;
         CFG.wifi_enabled = d.wifi_enabled;
@@ -305,13 +404,11 @@
         var root = $('gl');
         dataUrl = root.getAttribute('data-url');
         saveUrl = root.getAttribute('data-save-url');
-        simUrl = root.getAttribute('data-sim-url');
 
         document.addEventListener('click', function (e) {
             if (!e.target.closest('#gl .sel')) closeSels();
         });
 
-        /* 把事件挂到 window，供模板里的 onclick 调用 */
         window.toggleSel = toggleSel;
         window.pickFunc = pickFunc;
         window.pickProxy = pickProxy;
@@ -320,7 +417,6 @@
         window.onText = onText;
         window.doRevert = doRevert;
         window.doSave = doSave;
-        window.simulate = simulate;
 
         applyUI();
         poll();
