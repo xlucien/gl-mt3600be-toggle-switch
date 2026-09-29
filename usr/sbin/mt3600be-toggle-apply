@@ -14,6 +14,9 @@ case "$LEVEL" in high) VALUE=1;; low) VALUE=0;; *) exit 2;; esac
 
 config_load 'mt3600be-toggle'
 config_get_bool GLOBAL_ENABLED main global_enabled '0'
+# 互斥模式：led_name 之外的灯强制熄灭（默认开）。
+# 关掉它就退回「只操作列表内的灯、别的灯不碰」的旧行为。
+config_get_bool LED_EXCLUSIVE main led_exclusive '1'
 
 previous="$(cat "$STATE_FILE" 2>/dev/null)"
 [ "$previous" = "$VALUE" ] && [ "$FORCE" != 'force' ] && exit 0
@@ -23,7 +26,7 @@ logger -t "$TAG" "MODE=$VALUE ($LEVEL)"
 [ "$GLOBAL_ENABLED" -eq 1 ] || exit 0
 
 set_led() {
-	local enabled name action max path led
+	local enabled name action max path led other
 	config_get_bool enabled main led_enabled '0'
 	[ "$enabled" -eq 1 ] || return 0
 	# led_name accepts a space separated list, e.g. 'blue:status white:status'
@@ -44,6 +47,27 @@ set_led() {
 			echo 0 > "$path/brightness"
 		fi
 	done
+
+	# 【模式互斥】不在 led_name 里的灯一律强制熄灭。
+	# 这样三种模式才有明确的语义差别：
+	#   单独蓝灯 = 只有蓝灯跟随开关，白灯永远灭
+	#   单独白灯 = 只有白灯跟随开关，蓝灯永远灭
+	#   双色灯   = 两颗都在 led_name 里，同亮同灭
+	# 灯名从 /sys/class/leds 现场枚举（不写死 blue/white），换机型也能用。
+	if [ "$LED_EXCLUSIVE" = '1' ]; then
+		for path in /sys/class/leds/*/brightness; do
+			[ -w "$path" ] || continue
+			other="${path%/brightness}"
+			other="${other##*/}"
+			case " $name " in
+				*" $other "*) continue ;;
+			esac
+			tpath="/sys/class/leds/${other}/trigger"
+			[ -w "$tpath" ] && echo none > "$tpath"
+			echo 0 > "$path"
+			logger -t "$TAG" "LED excluded -> off: $other"
+		done
+	fi
 }
 
 set_service_feature() {

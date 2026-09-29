@@ -227,13 +227,29 @@
     #gl .opt.dim { color:#aab2c0; }
     #gl .opt.dim.cur { color:var(--brand); }
 
-    /* 分段控件：浅灰凹槽，选中项 = 白色浮起小块（不加黑环） */
-    #gl .seg { display:inline-flex; background:#f2f4f8; border-radius:var(--r-box); padding:3px; gap:2px; flex-wrap:wrap; }
-    #gl .seg button { border:0; background:transparent; padding:7px 16px; border-radius:var(--r-ctl);
-                      font-size:13px; font-weight:600; color:#7c8698; cursor:pointer; transition:all .15s; }
+    /* 分段控件：浅灰凹槽，选中项 = 白色浮起小块（不加黑环）
+
+       【宽度必须锁死，不能靠内容撑】原来按钮宽度是 padding 撑出来的，
+       选中项切成白底 + 投影后，度量差异会让选中块看着比未选中窄一圈，
+       用户反馈「一点就缩小、取消又变大」。
+       解决：整排改用 grid 等分容器宽度，每格 width:100%，
+       选中/未选中尺寸完全一致，切换时不再跳。 */
+    #gl .seg { display:grid; background:#f2f4f8; border-radius:var(--r-box); padding:3px;
+               gap:2px; }
+    #gl .seg button { border:0; background:transparent; padding:7px 10px; border-radius:var(--r-ctl);
+                      font-size:13px; font-weight:600; color:#7c8698; cursor:pointer;
+                      transition:background .15s, color .15s, box-shadow .15s;
+                      box-sizing:border-box; width:100%; text-align:center;
+                      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     #gl .seg button:hover:not(.active):not(.dim) { color:var(--text); }
     #gl .seg button.active { background:#fff; color:var(--text); box-shadow:0 1px 3px rgba(16,24,40,.08); }
-    #gl .seg.seg4 button { padding:7px 12px; }
+    /* 一排 4 个（RESET 手势）：固定总宽，四等分 */
+    #gl .seg.seg4 { grid-template-columns:repeat(4, minmax(0, 1fr)); width:396px; }
+    #gl .seg.seg4 button { padding:7px 4px; }
+    /* 代理程序：固定 3 列，每格等宽，不随名字长短变形 */
+    #gl #proxySeg { grid-template-columns:repeat(3, minmax(0, 1fr)); width:100%; }
+    /* 左拨动作：两个按钮等分 */
+    #gl #actSeg { grid-template-columns:repeat(2, minmax(0, 1fr)); width:100%; }
     /* 未安装的代理：灰显 + 不可点，与「可选列表要列全」配套 */
     #gl .seg button.dim { color:#bcc3cf; cursor:not-allowed; }
     #gl .seg button.dim:hover { color:#bcc3cf; }
@@ -354,13 +370,6 @@
                         <div id="proxyItem">
                             <div class="fxh">代理程序</div>
                             <div class="fxctrls"><div class="seg" id="proxySeg"></div></div>
-                            <!-- 预设 8 个之外的代理：搜关键词，系统里找相近的给你挑 -->
-                            <div class="fxfind">
-                                <input type="text" id="proxyKw" placeholder="其他代理？输入关键词如 xray、clash"
-                                       onkeydown="if(event.key==='Enter')doProxySearch()">
-                                <button type="button" class="btn" id="btnProxyFind" onclick="doProxySearch()">检测</button>
-                            </div>
-                            <div class="fxfind-list" id="proxyFind"></div>
                         </div>
 
                         <div id="actItem">
@@ -377,6 +386,17 @@
                 <div class="fxcap">可控制</div>
                 <div class="fxscroll">
                     <div id="capBox"></div>
+                    <!-- 预设 8 个之外的代理：搜关键词，系统里找相近的给你挑。
+                         放右栏，紧跟在可控制列表下面。 -->
+                    <div id="findBox" style="display:none">
+                        <div class="fxh">查找其他代理</div>
+                        <div class="fxfind">
+                            <input type="text" id="proxyKw" placeholder="输入关键词，如 xray、clash"
+                                   onkeydown="if(event.key==='Enter')doProxySearch()">
+                            <button type="button" class="btn" id="btnProxyFind" onclick="doProxySearch()">检测</button>
+                        </div>
+                        <div class="fxfind-list" id="proxyFind"></div>
+                    </div>
                 </div>
             </div>
 
@@ -435,4 +455,4 @@
 
 {% include('footer') %}
 
-<script src="/luci-static/resources/mt3600be-toggle/toggle.js?v=20260930c"></script>
+<script src="/luci-static/resources/mt3600be-toggle/toggle.js?v=20260930d"></script>

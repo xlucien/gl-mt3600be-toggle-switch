@@ -10,11 +10,14 @@ config mt3600be_toggle 'main'
 	option boot_off_leds 'white:status'
 
 	option led_enabled '0'
-	# LED 档控制的灯。页面把它呈现为三种模式三选一：
-	#   单独蓝灯 = 'blue:status' / 单独白灯 = 'white:status'
-	#   双色灯   = 'blue:status white:status'
-	# 默认只控蓝灯（led-running 运行指示）。改这里等于改页面上的模式选择。
+	# LED 档控制的灯。页面把它呈现为三种**互斥**模式：
+	#   单独蓝灯 = 'blue:status'          → 白灯永远熄灭
+	#   单独白灯 = 'white:status'         → 蓝灯永远熄灭
+	#   双色灯   = 'blue:status white:status' → 两颗同亮同灭
+	# led_exclusive=1 时，不在 led_name 里的灯会被强制熄灭，
+	# 三种模式才有明确的语义差别；设 0 则退回「只动列表内的灯」。
 	option led_name 'blue:status'
+	option led_exclusive '1'
 	option led_high_action '1'
 	option led_low_action '0'
 

@@ -100,11 +100,14 @@
         for (i = 0; i < parts.length; i++) if (parts[i]) out.push(parts[i]);
         return out;
     }
-    /* ===== 灯光模式：单独蓝灯 / 单独白灯 / 双色灯 ===== */
+    /* ===== 灯光模式：单独蓝灯 / 单独白灯 / 双色灯（三选一，互斥） =====
+       语义由后端 led_exclusive=1 保证：不在 led_name 里的灯被强制熄灭。
+       所以「单独蓝灯」= 白灯永远灭，「单独白灯」= 蓝灯永远灭，
+       「双色灯」= 两颗同亮同灭。 */
     var LED_MODES = [
-        { v: 'blue',  t: '单独蓝灯', d: '只控制蓝色运行灯，白灯保持不动' },
-        { v: 'white', t: '单独白灯', d: '只控制白色状态灯，蓝灯保持不动' },
-        { v: 'both',  t: '双色灯',   d: '蓝灯和白灯一起亮灭' }
+        { v: 'blue',  t: '单独蓝灯', d: '只控蓝灯，白灯始终熄灭' },
+        { v: 'white', t: '单独白灯', d: '只控白灯，蓝灯始终熄灭' },
+        { v: 'both',  t: '双色灯',   d: '蓝灯白灯同亮同灭' }
     ];
     /* 已检测到的灯（后端来自 /sys/class/leds），匹配不到就退化成默认两颗 */
     function ledPool() {
@@ -276,6 +279,8 @@
     /* 右栏「可控制」能力卡片 */
     function renderCap(f) {
         var box = $('capBox'), html = '';
+        var findBox = $('findBox');
+        if (findBox) findBox.style.display = 'none';   /* 默认收起，仅代理档展开 */
 
         if (f === 'none') {
             box.innerHTML = '<div class="cap-empty">未选择功能，滑块仅作位置指示。</div>';
@@ -315,6 +320,7 @@
 
         /* 代理：只列出检测到的插件，卡片可直接点击选择 */
         var list = proxyDetected(), k, p;
+        if (findBox) findBox.style.display = 'block';   /* 「查找其他代理」只在代理档出现 */
         if (!list.length) {
             box.innerHTML = '<div class="cap-empty">未检测到任何代理插件。</div>';
             return;
