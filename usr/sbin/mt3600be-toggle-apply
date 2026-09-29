@@ -6,6 +6,9 @@ TAG='mt3600be-toggle'
 STATE_FILE='/tmp/mt3600be-toggle-state'
 LEVEL="$1"
 FORCE="$2"
+# 第三个参数 ONLY=led 时只刷灯态，不碰 Wi-Fi / 代理。
+# 页面「保存」按钮用它把灯对齐到新配置；「保存并应用」才跑完整动作。
+ONLY="$3"
 
 case "$LEVEL" in high) VALUE=1;; low) VALUE=0;; *) exit 2;; esac
 
@@ -84,6 +87,11 @@ set_proxy() {
 		/usr/sbin/mt3600be-toggle-proxy off
 	fi
 }
+
+if [ "$ONLY" = 'led' ]; then
+	set_led
+	exit 0
+fi
 
 set_led
 set_wifi

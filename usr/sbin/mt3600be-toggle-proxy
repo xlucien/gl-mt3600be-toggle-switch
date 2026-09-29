@@ -7,11 +7,25 @@ TAG='mt3600be-toggle-proxy'
 CHOICE="${2:-$(uci -q get mt3600be-toggle.main.proxy_target 2>/dev/null)}"
 [ -n "$CHOICE" ] || CHOICE='auto'
 
+# 自定义目标：用户在页面搜索框里查到、选中并保存的第三方代理，
+# 名字存在 UCI list mt3600be-toggle.main.proxy_custom。
+custom_list() {
+	uci -q get mt3600be-toggle.main.proxy_custom
+}
+
+is_custom() {
+	local t
+	for t in $(custom_list); do
+		[ "$t" = "$1" ] && return 0
+	done
+	return 1
+}
+
 valid_target() {
 	case "$1" in
 		auto|passwall|passwall2|openclash|ssrplus|nikki|daed|homeproxy|mihomo) return 0 ;;
-		*) return 1 ;;
 	esac
+	is_custom "$1"
 }
 
 service_for() {
@@ -24,19 +38,29 @@ service_for() {
 		daed) echo daed ;;
 		homeproxy) echo homeproxy ;;
 		mihomo) [ -x /etc/init.d/mihomo ] && echo mihomo || echo mihomo-tproxy ;;
+		*) is_custom "$1" && echo "$1" ;;
 	esac
 }
 
 installed() {
 	local service
 	service="$(service_for "$1")"
-	[ -x "/etc/init.d/$service" ] || [ -f "/etc/config/$1" ] || {
-		[ "$1" = ssrplus ] && [ -f /etc/config/shadowsocksr ]
-	}
+	[ -n "$service" ] || return 1
+	[ -x "/etc/init.d/$service" ] && return 0
+	[ -f "/etc/config/$1" ] && return 0
+	[ "$1" = ssrplus ] && [ -f /etc/config/shadowsocksr ]
+	return 1
 }
 
 configured() {
 	local value
+	if is_custom "$1"; then
+		[ "$(uci -q get "$1".config.enabled)" = 1 ] && return 0
+		[ "$(uci -q get "$1".@global[0].enabled)" = 1 ] && return 0
+		# 没有 enabled 开关就按「未启用」算：装了但没开的程序不该显示成
+		# 「配置已开·未运行」那种红色告警态
+		return 1
+	fi
 	case "$1" in
 		passwall) value="$(uci -q get passwall.@global[0].enabled)" ;;
 		passwall2) value="$(uci -q get passwall2.@global[0].enabled)" ;;
@@ -61,6 +85,12 @@ configured() {
 
 running() {
 	local service json
+	if is_custom "$1"; then
+		ubus call service list "{\"name\":\"$1\"}" 2>/dev/null \
+			| grep -q '"running"[[:space:]]*:[[:space:]]*true' && return 0
+		/etc/init.d/"$1" running >/dev/null 2>&1 && return 0
+		return 1
+	fi
 	service="$(service_for "$1")"
 	json="$(ubus call service list "{\"name\":\"$service\"}" 2>/dev/null)"
 	echo "$json" | grep -q '"running"[[:space:]]*:[[:space:]]*true' && return 0
@@ -115,6 +145,17 @@ resolve() {
 
 set_configured() {
 	local item="$1" value="$2" package
+	if is_custom "$item"; then
+		# 自定义程序不一定有 enabled 开关，有就写、没有就只靠启停脚本
+		if uci -q get "$item".config.enabled >/dev/null; then
+			uci -q set "$item".config.enabled="$value"
+		elif uci -q get "$item".@global[0].enabled >/dev/null; then
+			uci -q set "$item".@global[0].enabled="$value"
+		fi
+		# 只在配置文件确实存在时才 commit，避免凭空建出一个空的 /etc/config/<item>
+		[ -f "/etc/config/$item" ] && uci -q commit "$item"
+		return
+	fi
 	case "$item" in
 		passwall) uci -q set "passwall.@global[0].enabled=$value"; package=passwall ;;
 		passwall2) uci -q set "passwall2.@global[0].enabled=$value"; package=passwall2 ;;

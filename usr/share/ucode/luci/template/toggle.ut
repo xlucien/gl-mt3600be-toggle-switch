@@ -83,6 +83,8 @@
     #gl .pill.idle { background:#f1f3f7; color:var(--muted); }
     #gl .pill.err  { background:#fdecec; color:var(--hot); }
     #gl .pill.conf { background:#fdf1dc; color:var(--warn); }
+    /* 与风扇控制一致：有未保存改动时胶囊转琥珀底 */
+    #gl .pill.dirty { background:#fdf1dc; color:var(--warn); }
 
     /* ===== 开关演示（纯展示） ===== */
     #gl .demo { display:flex; align-items:center; gap:24px; flex-wrap:wrap; }
@@ -119,6 +121,16 @@
     #gl .stv.on { color:var(--ok); }
     #gl .stv.off { color:var(--muted); }
     #gl .hint { font-size:12px; color:var(--muted); }
+    /* 演示卡右列：RESET 手势当前绑定什么，一眼可见 */
+    #gl .demo-side { flex:none; width:236px; border-left:1px dashed var(--line); padding-left:20px; }
+    #gl .ds-h { font-size:11.5px; font-weight:700; color:var(--muted); letter-spacing:.4px; margin-bottom:11px; }
+    #gl .ds-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:7px 0; }
+    #gl .ds-k { font-size:12.5px; color:var(--muted); }
+    #gl .ds-v { font-size:12.5px; font-weight:700; padding:3px 11px; border-radius:var(--r-pill);
+                background:var(--brand-soft); color:var(--brand); }
+    #gl .ds-v.off { background:#f1f3f7; color:var(--muted); font-weight:600; }
+    @media (max-width:900px){ #gl .demo-side { width:100%; border-left:0; border-top:1px dashed var(--line);
+                                              padding:14px 0 0; } }
 
     /* ===== 功能：左右两栏（高度固定，切换功能时不跳动） ===== */
     #gl .fxrow { display:flex; gap:14px; align-items:stretch; flex-wrap:wrap; }
@@ -135,18 +147,56 @@
     #gl .fxnote { font-size:12.5px; color:var(--muted); line-height:1.7; margin-top:8px; }
     #gl .fxnote b { color:var(--text); font-weight:700; }
 
-    /* 右栏条目：统一一张轻卡片，不用彩色左边框，避免花 */
+    /* 右栏条目：统一一张轻卡片，不用彩色左边框，避免花。
+
+       【高度必须一致】之前每张卡片随描述长短忽高忽矮，一屏里看着参差。
+       现在给卡片一个固定最小高度、标题行和描述行各一个最小高度，
+       描述再钉死两行（超出省略），于是「单独蓝灯 / 单独白灯 / 双色灯 / 受控灯」
+       以及各个代理卡片全部等高，点选时不会跳动。 */
     #gl .cap { border:1px solid var(--line); background:#fff; border-radius:var(--r-box);
-               padding:11px 13px; margin-bottom:10px; }
+               padding:11px 13px; margin-bottom:10px;
+               min-height:88px; display:flex; flex-direction:column; justify-content:center; }
     #gl .cap:last-child { margin-bottom:0; }
-    #gl .cap-h { display:flex; align-items:center; gap:8px; margin-bottom:5px; flex-wrap:wrap; }
+    #gl .cap-h { display:flex; align-items:center; gap:8px; margin-bottom:5px; flex-wrap:wrap;
+                 min-height:22px; }
     #gl .cap-n { font-size:13.5px; font-weight:650; }
-    #gl .cap-d { font-size:12px; color:var(--muted); line-height:1.6; }
+    /* 描述区固定两行高度（min-height 撑开、超出省略），
+       但**不裁**第二行里的「左拨 / 右拨」说明 —— 之前 line-clamp 把后半句吃了 */
+    #gl .cap-d { font-size:12px; color:var(--muted); line-height:1.6; min-height:38px; }
+    #gl .cap-d b { color:var(--text); font-weight:700; }
     #gl .cap-empty { font-size:13px; color:var(--muted); padding:16px 4px; }
-    /* 可点击选择的条目（代理） */
+    /* 可点击选择的条目（代理 / 灯光模式） */
     #gl .cap.pick { cursor:pointer; transition:all .15s; }
     #gl .cap.pick:hover { border-color:#c3cdf5; background:#fbfcff; }
     #gl .cap.pick.sel { border-color:var(--brand); background:var(--brand-soft); }
+    /* 自定义代理卡片右上角「移除」 */
+    #gl .cap-x { margin-left:auto; flex:none; font-size:11.5px; font-weight:600; color:var(--muted);
+                 padding:3px 9px; border-radius:var(--r-ctl); background:#f4f6fa; transition:all .15s; }
+    #gl .cap-x:hover { background:#fdecec; color:var(--hot); }
+
+    /* 自定义代理搜索：输入框 + 检测按钮 + 结果行。
+       输入框沿用「槽内控件」语言（灰底、--r-ctl），与分段控件同源。 */
+    #gl .fxfind { display:flex; gap:8px; margin-top:10px; }
+    #gl .fxfind input { flex:1 1 auto; min-width:0; border:1px solid var(--line) !important;
+                        background:#f2f4f8; padding:8px 12px; font-size:13px;
+                        font-family:inherit; color:var(--text); }
+    #gl .fxfind input:focus { background:#fff; border-color:var(--brand) !important;
+                              box-shadow:0 0 0 3px rgba(46,123,240,.14); }
+    #gl .fxfind input::placeholder { color:#aab2c0; }
+    #gl .fxfind .btn { padding:8px 16px; flex:none; }
+    #gl .fxfind-list { margin-top:10px; display:flex; flex-direction:column; gap:8px; }
+    #gl .frow { display:flex; align-items:center; gap:8px; border:1px solid var(--line);
+                background:#fff; border-radius:var(--r-box); padding:8px 11px; }
+    #gl .frow .fn { font-size:13px; font-weight:600; flex:1 1 auto; min-width:0;
+                    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #gl .frow .fsrc { font-size:11px; font-weight:600; padding:2px 8px; border-radius:var(--r-pill);
+                      background:#f1f3f7; color:var(--muted); flex:none; }
+    #gl .frow .fbtn { font-size:12px; font-weight:700; padding:4px 10px; border-radius:var(--r-ctl);
+                      background:var(--brand-soft); color:var(--brand); flex:none; }
+    #gl .frow .fbtn.grey { background:#f1f3f7; color:var(--muted); font-weight:600; }
+    #gl .frow.click { cursor:pointer; transition:all .15s; }
+    #gl .frow.click:hover { border-color:#c3cdf5; background:#fbfcff; }
+    #gl .frow.sel { border-color:var(--brand); background:var(--brand-soft); }
 
     /* 下拉（仅代理程序用，选项多） */
     #gl .sel { position:relative; display:inline-block; min-width:176px; }
@@ -171,9 +221,12 @@
     #gl .seg { display:inline-flex; background:#f2f4f8; border-radius:var(--r-box); padding:3px; gap:2px; flex-wrap:wrap; }
     #gl .seg button { border:0; background:transparent; padding:7px 16px; border-radius:var(--r-ctl);
                       font-size:13px; font-weight:600; color:#7c8698; cursor:pointer; transition:all .15s; }
-    #gl .seg button:hover:not(.active) { color:var(--text); }
+    #gl .seg button:hover:not(.active):not(.dim) { color:var(--text); }
     #gl .seg button.active { background:#fff; color:var(--text); box-shadow:0 1px 3px rgba(16,24,40,.08); }
     #gl .seg.seg4 button { padding:7px 12px; }
+    /* 未安装的代理：灰显 + 不可点，与「可选列表要列全」配套 */
+    #gl .seg button.dim { color:#bcc3cf; cursor:not-allowed; }
+    #gl .seg button.dim:hover { color:#bcc3cf; }
 
     /* 灯名胶囊（放右栏，蓝灯/白灯都能点） */
     #gl .ledpicks { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
@@ -197,7 +250,10 @@
 
 <div id="gl"
      data-url='{{ dispatcher.build_url("admin", "system", "toggle", "data") }}'
-     data-save-url='{{ dispatcher.build_url("admin", "system", "toggle", "save") }}'>
+     data-save-url='{{ dispatcher.build_url("admin", "system", "toggle", "save") }}'
+     data-apply-url='{{ dispatcher.build_url("admin", "system", "toggle", "apply") }}'
+     data-search-url='{{ dispatcher.build_url("admin", "system", "toggle", "proxy_search") }}'
+     data-defaults-url='{{ dispatcher.build_url("admin", "system", "toggle", "defaults") }}'>
 <div class="wrap">
 
     <div class="pghead">
@@ -232,17 +288,26 @@
                 </div>
                 <div class="hint">位置与灯态每 3 秒自动刷新。左拨 = 物理 HIGH；右拨 = 物理 LOW。</div>
             </div>
+            <!-- 右列：RESET 手势当前绑定的功能 -->
+            <div class="demo-side">
+                <div class="ds-h">RESET 按键</div>
+                <div class="ds-row"><span class="ds-k">按 1 下</span><span class="ds-v off" id="dsSingle">禁用</span></div>
+                <div class="ds-row"><span class="ds-k">按 2 下</span><span class="ds-v off" id="dsDouble">禁用</span></div>
+                <div class="ds-row"><span class="ds-k">按 3 下</span><span class="ds-v off" id="dsTriple">禁用</span></div>
+            </div>
         </div>
     </div>
 
-    <!-- 2. 保存栏（单独一栏） -->
+    <!-- 2. 保存栏（单独一栏）—— 与风扇控制同一套：左边状态胶囊 + 右边放弃/保存/保存并应用 -->
     <div class="card savebar">
         <div class="sb-left">
-            <span class="pill idle" id="dirtyNote" style="display:none"><i></i>有未保存的修改</span>
-            <button type="button" class="btn ghost" onclick="doRevert()">放弃修改</button>
+            <span class="pill idle" id="dirtyNote"><i></i>已同步</span>
+            <span class="card-s" id="saveHint">改动后需点击「保存」或「保存并应用」</span>
         </div>
         <div class="sb-right">
-            <button type="button" class="btn primary" id="btnApply" onclick="doSave()" disabled>保存</button>
+            <button type="button" class="btn" id="btnRevert" onclick="doRevert()" disabled>放弃修改</button>
+            <button type="button" class="btn" id="btnSave" onclick="doSave()" disabled>保存</button>
+            <button type="button" class="btn primary" id="btnApply" onclick="doApply()">保存并应用</button>
         </div>
     </div>
 
@@ -278,14 +343,14 @@
 
                         <div id="proxyItem">
                             <div class="fxh">代理程序</div>
-                            <div class="fxctrls">
-                                <div class="sel" id="proxySel">
-                                    <button type="button" class="selbtn" onclick="toggleSel('proxySel')">
-                                        <span id="proxyLabel">自动</span><span class="caret"></span>
-                                    </button>
-                                    <div class="menu" id="proxyMenu"></div>
-                                </div>
+                            <div class="fxctrls"><div class="seg" id="proxySeg"></div></div>
+                            <!-- 预设 8 个之外的代理：搜关键词，系统里找相近的给你挑 -->
+                            <div class="fxfind">
+                                <input type="text" id="proxyKw" placeholder="其他代理？输入关键词如 xray、clash"
+                                       onkeydown="if(event.key==='Enter')doProxySearch()">
+                                <button type="button" class="btn" id="btnProxyFind" onclick="doProxySearch()">检测</button>
                             </div>
+                            <div class="fxfind-list" id="proxyFind"></div>
                         </div>
 
                         <div id="actItem">
@@ -344,10 +409,20 @@
         <div class="hint" style="padding-top:8px">多击需在 1 秒内完成。「LED」按当前状态切换受控 LED 的亮灭、「无线」开关 WiFi、「重启」重启设备；选「禁用」则该手势不执行任何动作。长按 5 秒以上仍为恢复出厂设置。</div>
     </div>
 
+    <!-- 5. 页脚：恢复默认设置 -->
+    <div class="card savebar">
+        <div class="sb-left">
+            <span class="hint">恢复默认：滑块无功能、LED 档只控蓝灯、RESET 三个手势全部禁用。</span>
+        </div>
+        <div class="sb-right">
+            <button type="button" class="btn" id="btnDefaults" onclick="doDefaults()">恢复默认设置</button>
+        </div>
+    </div>
+
 </div>
 <div class="toast" id="toast"></div>
 </div>
 
 {% include('footer') %}
 
-<script src="/luci-static/resources/mt3600be-toggle/toggle.js?v=20260929d"></script>
+<script src="/luci-static/resources/mt3600be-toggle/toggle.js?v=20260930b"></script>

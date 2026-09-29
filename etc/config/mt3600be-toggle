@@ -10,7 +10,10 @@ config mt3600be_toggle 'main'
 	option boot_off_leds 'white:status'
 
 	option led_enabled '0'
-	# LED 档控制的灯，支持空格分隔；GL-MT3600BE 默认只控蓝灯（led-running 运行指示）
+	# LED 档控制的灯。页面把它呈现为三种模式三选一：
+	#   单独蓝灯 = 'blue:status' / 单独白灯 = 'white:status'
+	#   双色灯   = 'blue:status white:status'
+	# 默认只控蓝灯（led-running 运行指示）。改这里等于改页面上的模式选择。
 	option led_name 'blue:status'
 	option led_high_action '1'
 	option led_low_action '0'
@@ -29,9 +32,11 @@ config mt3600be_toggle 'main'
 	option proxy_low_action '1'
 
 	# RESET multi-click control is independent from global_enabled.
+	# 默认三个手势全部「禁用」——出厂状态下 RESET 不做任何额外动作，
+	# 用户想用哪个再单独开（长按 5 秒恢复出厂不受影响）。
 	option reset_single_enabled '0'
 	option reset_single_action 'wifi'
 	option reset_double_enabled '0'
 	option reset_double_action 'wifi'
 	option reset_triple_enabled '0'
-	option reset_triple_action 'reboot'
+	option reset_triple_action 'wifi'

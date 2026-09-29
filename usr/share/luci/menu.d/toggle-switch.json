@@ -30,5 +30,29 @@
             "function": "action_simulate"
         },
         "leaf": true
+    },
+    "admin/system/toggle/apply": {
+        "action": {
+            "type": "function",
+            "module": "luci.controller.toggle",
+            "function": "action_apply"
+        },
+        "leaf": true
+    },
+    "admin/system/toggle/proxy_search": {
+        "action": {
+            "type": "function",
+            "module": "luci.controller.toggle",
+            "function": "action_proxy_search"
+        },
+        "leaf": true
+    },
+    "admin/system/toggle/defaults": {
+        "action": {
+            "type": "function",
+            "module": "luci.controller.toggle",
+            "function": "action_defaults"
+        },
+        "leaf": true
     }
 }

@@ -16,8 +16,30 @@ function cfg_bool(key, fallback) {
     return cfg_get(key, fallback) == '1';
 }
 
+// ===== 自定义代理 =====
+// 预设 8 个插件之外的代理（比如自己装的 xray / v2raya / 某个小众壳），
+// 用户在页面搜索框里查到后选中，名字存进 UCI list proxy_custom。
+// 之后 valid_proxy() / proxy_list() / mt3600be-toggle-proxy 都把它当成合法目标。
+function custom_list() {
+    let value = cur.get('mt3600be-toggle', 'main', 'proxy_custom');
+    let out = [];
+    if (value == null) return out;
+    let items = (type(value) == 'array') ? value : split(`${value}`, /\s+/);
+    for (let x in items) {
+        let s = trim(`${x}`);
+        if (s != '' && !proxy_targets[s] && match(s, /^[A-Za-z0-9][A-Za-z0-9._+-]*$/))
+            push(out, s);
+    }
+    return out;
+}
+
+function is_custom(value) {
+    for (let c in custom_list()) if (c == value) return true;
+    return false;
+}
+
 function valid_proxy(value) {
-    return proxy_targets[value] ? value : 'auto';
+    return (proxy_targets[value] || is_custom(value)) ? value : 'auto';
 }
 
 function valid_reset(value) {
@@ -61,7 +83,90 @@ function proxy_list() {
     let list = [{ target: 'auto', state: 'auto', configured: false, running: false }];
     for (let target in targets)
         push(list, proxy_status(target));
+    // 自定义目标排在预设后面，同样走一遍状态检测
+    for (let target in custom_list())
+        push(list, proxy_status(target));
     return list;
+}
+
+// ===== 自定义代理搜索 =====
+// 用户在页面输入关键词，这里到系统里找「名字相近」的程序给他挑：
+//   1) /etc/init.d/*  有启停脚本 —— 这类才能被滑块真正控制
+//   2) /etc/config/*  有配置文件 —— 装过但不一定能直接启停
+//   3) opkg list-installed        —— 已安装的包名
+// 结果按「能控制」优先排，不能控制的也列出来，由用户自己判断。
+function shell_lines(cmd) {
+    let out = [];
+    for (let line in split(command_output(cmd), '\n')) {
+        let s = trim(line);
+        if (s != '') push(out, s);
+    }
+    return out;
+}
+
+function scan_names(path, keyword, source, bucket) {
+    let dir = fs.opendir(path);
+    if (!dir) return;
+    let entry, name;
+    while ((entry = dir.read()) != null) {
+        name = (type(entry) == 'object') ? entry.name : entry;
+        if (name == null) continue;
+        name = `${name}`;
+        if (name == '' || name == '.' || name == '..') continue;
+        if (index(lc(name), keyword) < 0) continue;
+        if (bucket[name] == null) bucket[name] = [];
+        push(bucket[name], source);
+    }
+    dir.close();
+}
+
+function service_running(name) {
+    let json = command_output(`ubus call service list '{"name":"${name}"}' 2>/dev/null`);
+    if (index(replace(`${json ?? ''}`, ' ', '', 'g'), '"running":true') >= 0) return true;
+    return trim(command_output(`/etc/init.d/${name} running >/dev/null 2>&1 && echo 1`)) == '1';
+}
+
+function has_init_script(name) {
+    return trim(command_output(`[ -x '/etc/init.d/${name}' ] && echo 1`)) == '1';
+}
+
+function proxy_search(keyword) {
+    let k = lc(trim(`${keyword ?? ''}`));
+    let items = [];
+    if (k == '' || !match(keyword, /^[A-Za-z0-9._+ -]+$/)) return items;
+
+    let bucket = {};
+    scan_names('/etc/init.d', k, 'initd', bucket);
+    scan_names('/etc/config', k, 'config', bucket);
+    // 包名：25.12 起固件换成 apk（opkg 已经不存在），两个都试一遍，取并集。
+    // opkg 输出 "名字 - 版本"，apk info 只输出 "名字"，正则不要求尾部空白即可兼容。
+    for (let line in shell_lines('( opkg list-installed 2>/dev/null; apk info 2>/dev/null )')) {
+        let m = match(line, /^([A-Za-z0-9][A-Za-z0-9._+-]*)/);
+        if (!m) continue;
+        let name = m[1];
+        if (index(lc(name), k) < 0) continue;
+        if (bucket[name] == null) bucket[name] = [];
+        push(bucket[name], 'opkg');
+    }
+
+    let names = sort(keys(bucket) ?? []);
+    let usable = [], others = [];
+    for (let name in names) {
+        let can = has_init_script(name);
+        let item = {
+            target: name,
+            label: name,
+            src: bucket[name],
+            has_init: can,
+            running: can ? service_running(name) : false,
+            known: (proxy_targets[name] == true) || is_custom(name)
+        };
+        if (can) push(usable, item);
+        else push(others, item);
+    }
+    for (let it in usable) push(items, it);
+    for (let it in others) push(items, it);
+    return length(items) > 40 ? slice(items, 0, 40) : items;
 }
 
 // 右栏「可控制」用：只保留实际检测到的插件（未安装的丢弃），这些条目可点击选择。
@@ -95,30 +200,61 @@ function physical_state() {
     return trim(fs.readfile('/tmp/mt3600be-toggle-state') ?? '') == '1' ? '1' : '0';
 }
 
-// 只接受 /sys/class/leds 里真实存在的灯名，多个用空格分隔；去重后拼回字符串。
-// 页面只提交检测到的灯名，这里再兜一层，避免写进无效值导致 LED 完全不受控。
-//
-// 【ucode 坑】`for (let x in 数组)` 遍历出来的是**元素值**，不是下标
-// （这一点和 JS 的 for-in 给下标完全不同）。所以判定成员要直接比 `x == part`，
-// 写成 `known[x] == part` 会全部落空 —— 曾因此把每个灯名都当成非法值，
-// 回退到 known[0]，表现就是「页面选白灯，保存后还是蓝灯」。
-function valid_leds(value) {
+// ===== 灯光模式 =====
+// 用户只需要在「单独蓝灯 / 单独白灯 / 双色灯」里三选一，不必手工写灯名。
+// 三种模式映射到 led_name：
+//   blue  -> blue:status
+//   white -> white:status
+//   both  -> blue:status white:status
+// 灯名来自 led_list()（/sys/class/leds 实测结果），保证只写真实节点。
+function led_mode_names(mode) {
     let known = led_list();
-    let out = [];
-    let parts = split(trim(`${value ?? ''}`), /\s+/);
-    for (let part in parts) {
-        if (part == '') continue;
-        let ok = (length(known) == 0);
-        for (let k in known) if (k == part) ok = true;
-        if (!ok) continue;
-        let dup = false;
-        for (let o in out) if (o == part) dup = true;
-        if (!dup) push(out, part);
+    let blue = null, white = null, first = null, second = null;
+    for (let n in known) {
+        let s = `${n}`;
+        if (first == null) first = s;
+        else if (second == null) second = s;
+        if (blue == null && index(s, 'blue') >= 0) blue = s;
+        if (white == null && index(s, 'white') >= 0) white = s;
     }
+    // 没有按名字匹配到时，退化成「第一颗 = 蓝、第二颗 = 白」
+    blue ??= first;
+    white ??= (blue != second) ? second : null;
+
+    let out = [];
+    if (mode == 'blue' && blue != null) push(out, blue);
+    else if (mode == 'white' && white != null) push(out, white);
+    else if (mode == 'both') for (let n in known) push(out, `${n}`);
+
+    // 兜底：至少给一颗，否则 LED 档会完全无灯可控
+    if (length(out) == 0 && first != null) push(out, first);
+    return out;
+}
+
+function led_name_to_mode(name) {
+    let parts = split(trim(`${name ?? ''}`), /\s+/);
+    let n = 0, blue = false, white = false;
+    for (let p in parts) {
+        if (p == '') continue;
+        n++;
+        let s = `${p}`;
+        if (index(s, 'blue') >= 0) blue = true;
+        if (index(s, 'white') >= 0) white = true;
+    }
+    if (n > 1) return 'both';
+    if (white && !blue) return 'white';
+    return 'blue';
+}
+
+function led_names_to_mode_string(mode) {
+    let names = led_mode_names(mode);
     let s = '';
-    for (let p in out) s = (s == '') ? p : (s + ' ' + p);
-    if (s != '') return s;
-    return length(known) ? known[0] : cfg_get('led_name', 'blue:status');
+    for (let n in names) s = (s == '') ? n : (s + ' ' + n);
+    return s;
+}
+
+function valid_led_mode(value) {
+    return (value == 'blue' || value == 'white' || value == 'both') ? value : 'blue';
 }
 
 // 直接读 debugfs 里 mode 引脚的真实电平，返回 '1'(HIGH/左) / '0'(LOW/右) / null。
@@ -176,13 +312,63 @@ function full_data() {
         reset_triple_enabled: cfg_bool('reset_triple_enabled', '0'),
         reset_triple_action: cfg_get('reset_triple_action', 'reboot'),
         reset_status: kv_file('/tmp/mt3600be-reset/last', { gesture: 'none', action: 'none', result: 'none', time: '' }),
-        led_name: cfg_get('led_name', 'blue:status')
+        proxies_custom: custom_list(),
+        led_name: cfg_get('led_name', 'blue:status'),
+        // 灯光模式由 led_name 反推，老配置不必迁移也能正确显示
+        led_mode: led_name_to_mode(cfg_get('led_name', 'blue:status'))
     };
 }
 
+// 把 LED 档控制的灯对齐到「滑块当前位置 + 当前动作」。
+// 用户每次改完灯光配置都要调一次，否则会留下「配置说开灯、灯却是灭的」这种不一致。
+function apply_led_now() {
+    let level = physical_state() == '1' ? 'high' : 'low';
+    system(`/usr/sbin/mt3600be-toggle-apply ${level} force >/dev/null 2>&1`);
+}
+
+// 恢复出厂默认：LED 档=蓝灯、滑块无功能、RESET 三个手势全部禁用。
+// 故意不覆盖用户可能自己调过的 boot_off_leds / 网络相关项。
+function reset_defaults() {
+    let d = {
+        global_enabled: '0',
+        led_enabled: '0', led_name: 'blue:status',
+        led_high_action: '1', led_low_action: '0',
+        wifi_enabled: '0', wifi_high_action: '0', wifi_low_action: '1',
+        proxy_enabled: '0', proxy_target: 'auto',
+        proxy_high_action: '0', proxy_low_action: '1',
+        reset_single_enabled: '0', reset_single_action: 'wifi',
+        reset_double_enabled: '0', reset_double_action: 'wifi',
+        reset_triple_enabled: '0', reset_triple_action: 'wifi'
+    };
+    for (let k, v in d)
+        cur.set('mt3600be-toggle', 'main', k, v);
+    cur.commit('mt3600be-toggle');
+    system('/usr/sbin/mt3600be-reset-control clear >/dev/null 2>&1');
+    // 默认无功能：把灯恢复成开机基线（boot_off_leds 里的熄灭、其余点亮）
+    system('/etc/init.d/mt3600be-toggle reload >/dev/null 2>&1 &');
+    return json_out({ success: true, data: full_data() });
+}
+
 function save(requested_action) {
+    // 自定义代理列表由页面整份回传（记住用户选过的自定义目标）。
+    // 必须放在 valid_proxy() 之前：新加的目标要先入表，才算合法。
+    let raw_custom = http.formvalue('proxy_custom');
+    if (raw_custom != null) {
+        let list = [];
+        for (let c in split(trim(`${raw_custom}`), /\s+/)) {
+            if (c == '' || proxy_targets[c]) continue;
+            if (!match(c, /^[A-Za-z0-9][A-Za-z0-9._+-]*$/)) continue;
+            push(list, c);
+        }
+        // 空列表必须 delete 而不能 set([])：set 空数组不会清掉原有 list
+        if (length(list) == 0) cur.delete('mt3600be-toggle', 'main', 'proxy_custom');
+        else cur.set('mt3600be-toggle', 'main', 'proxy_custom', list);
+        cur.commit('mt3600be-toggle');
+    }
+
     let old_wifi = cfg_get('wifi_enabled', '0');
     let old_proxy = cfg_get('proxy_enabled', '0');
+    let old_led = cfg_get('led_enabled', '0');
     let old_target = cfg_get('proxy_target', 'auto');
     let new_led = http.formvalue('led_enabled') == '1' ? '1' : '0';
     let new_wifi = http.formvalue('wifi_enabled') == '1' ? '1' : '0';
@@ -206,22 +392,33 @@ function save(requested_action) {
 
     cur.set('mt3600be-toggle', 'main', 'global_enabled', new_global);
     cur.set('mt3600be-toggle', 'main', 'proxy_target', new_target);
-    // led_name 必须落盘，否则页面选的灯（比如白灯）保存后仍是旧值
-    cur.set('mt3600be-toggle', 'main', 'led_name', valid_leds(http.formvalue('led_name')));
+    // 灯光模式 -> led_name。必须落盘，否则页面选的灯（比如白灯）保存后仍是旧值。
+    let new_mode = valid_led_mode(http.formvalue('led_mode') ?? led_name_to_mode(cfg_get('led_name', 'blue:status')));
+    cur.set('mt3600be-toggle', 'main', 'led_name', led_names_to_mode_string(new_mode));
     for (let gesture in [ 'single', 'double', 'triple' ])
         cur.set('mt3600be-toggle', 'main', `reset_${gesture}_action`, valid_reset(http.formvalue(`reset_${gesture}_action`) ?? 'wifi'));
     cur.commit('mt3600be-toggle');
 
     system('/usr/sbin/mt3600be-reset-control clear >/dev/null 2>&1');
-    if (requested_action == 'save' && old_wifi == '1' && new_wifi == '0')
+    // Wi-Fi 档关掉时一定要把射频还回去——这是安全兜底，保存和保存并应用都要做。
+    if (old_wifi == '1' && new_wifi == '0')
         system('/usr/sbin/mt3600be-toggle-wifi restore >/dev/null 2>&1');
     if (new_proxy == '1' && (old_proxy == '0' || old_target != new_target))
         system('/usr/sbin/mt3600be-toggle-proxy snapshot >/dev/null 2>&1');
-    if (requested_action == 'save') {
-        let level = physical_state() == '1' ? 'high' : 'low';
-        system(`/usr/sbin/mt3600be-toggle-apply ${level} force >/dev/null 2>&1 &`);
-    }
-    return json_out({ success: true, applied: requested_action == 'save', proxy_status: proxy_status(new_target) });
+
+    // LED 档关掉时，把原本受控的灯交还给开机基线，避免「已经不管灯了、灯还亮着」。
+    if (old_led == '1' && new_led == '0')
+        system('/etc/init.d/mt3600be-toggle reload >/dev/null 2>&1 &');
+
+    // 等一下再刷：led_name 刚提交，而 init.d reload（关档时）是异步的。
+    // save    = 只把灯态对齐到新配置（用户要求：改完灯光配置灯就必须跟着变），
+    //           不触发 Wi-Fi / 代理动作；
+    // apply   = 按当前滑块位置完整执行一次动作（灯 + Wi-Fi + 代理 + 钩子）。
+    let level = physical_state() == '1' ? 'high' : 'low';
+    let only = (requested_action == 'save') ? ' led' : '';
+    system(`( sleep 1; /usr/sbin/mt3600be-toggle-apply ${level} force${only} ) >/dev/null 2>&1 &`);
+
+    return json_out({ success: true, applied: requested_action == 'apply', proxy_status: proxy_status(new_target) });
 }
 
 // 模拟一次拨动：按指定方向强制执行一次动作（用于页面演示图点击预览）。
@@ -242,7 +439,18 @@ return {
     action_save: function() {
         return save('save');
     },
+    action_apply: function() {
+        return save('apply');
+    },
+    action_proxy_search: function() {
+        let kw = trim(`${http.formvalue('kw') ?? ''}`);
+        if (kw == '') return json_out({ success: false, error: '请输入关键词' }, 400);
+        return json_out({ success: true, keyword: kw, items: proxy_search(kw) });
+    },
     action_simulate: function() {
         return simulate();
+    },
+    action_defaults: function() {
+        return reset_defaults();
     }
 };

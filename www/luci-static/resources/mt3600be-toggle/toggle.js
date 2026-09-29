@@ -39,8 +39,11 @@
 
     var CFG = clone(INIT);
     var SAVED = clone(INIT);
+    var SAVED_CUSTOM = [];
     var firstLoad = true;
-    var dataUrl = '', saveUrl = '';
+    var dataUrl = '', saveUrl = '', applyUrl = '', defaultsUrl = '', searchUrl = '';
+    /* 用户自己搜出来并选中的自定义代理（预设 8 个之外），保存时整份回传给后端 */
+    var CUSTOM = [];
 
     function $(id) { return document.getElementById(id); }
     function esc(s) {
@@ -97,15 +100,52 @@
         for (i = 0; i < parts.length; i++) if (parts[i]) out.push(parts[i]);
         return out;
     }
-    /* 灯名 -> 友好中文名 */
-    function ledLabel(n) {
-        var s = String(n || '').toLowerCase();
-        if (s.indexOf('blue') >= 0) return '蓝灯';
-        if (s.indexOf('white') >= 0) return '白灯';
-        if (s.indexOf('green') >= 0) return '绿灯';
-        if (s.indexOf('red') >= 0) return '红灯';
-        if (s.indexOf('amber') >= 0 || s.indexOf('orange') >= 0) return '橙灯';
-        return n;
+    /* ===== 灯光模式：单独蓝灯 / 单独白灯 / 双色灯 ===== */
+    var LED_MODES = [
+        { v: 'blue',  t: '单独蓝灯', d: '只控制蓝色运行灯，白灯保持不动' },
+        { v: 'white', t: '单独白灯', d: '只控制白色状态灯，蓝灯保持不动' },
+        { v: 'both',  t: '双色灯',   d: '蓝灯和白灯一起亮灭' }
+    ];
+    /* 已检测到的灯（后端来自 /sys/class/leds），匹配不到就退化成默认两颗 */
+    function ledPool() {
+        return (CFG.leds && CFG.leds.length) ? CFG.leds : INIT.leds;
+    }
+    function ledPickOne(kind) {
+        var pool = ledPool(), i, s;
+        for (i = 0; i < pool.length; i++) {
+            s = String(pool[i]).toLowerCase();
+            if (s.indexOf(kind) >= 0) return pool[i];
+        }
+        return null;
+    }
+    /* 模式 -> 灯名数组（与后端 led_mode_names() 同一套规则） */
+    function modeNames(mode) {
+        var pool = ledPool(), i, out = [];
+        if (mode === 'both') {
+            for (i = 0; i < pool.length; i++) out.push(pool[i]);
+            return out;
+        }
+        var one = ledPickOne(mode === 'white' ? 'white' : 'blue');
+        if (one) return [one];
+        return pool.length ? [pool[0]] : [];
+    }
+    /* 灯名 -> 模式（后端已算好 led_mode，这里只做兜底） */
+    function namesToMode(name) {
+        var picked = ledList(name), blue = false, white = false, i, s;
+        for (i = 0; i < picked.length; i++) {
+            s = String(picked[i]).toLowerCase();
+            if (s.indexOf('blue') >= 0) blue = true;
+            if (s.indexOf('white') >= 0) white = true;
+        }
+        if (picked.length > 1) return 'both';
+        if (white && !blue) return 'white';
+        return 'blue';
+    }
+    function curLedMode() { return CFG.led_mode || namesToMode(CFG.led_name); }
+    function ledModeNames() {
+        var m = curLedMode(), out = [], i;
+        for (i = 0; i < LED_MODES.length; i++) if (LED_MODES[i].v === m) out.push(LED_MODES[i].t);
+        return out.join('、');
     }
     /* 左栏下拉用：全量候选（自动 + 8 个插件，装没装都列出来） */
     function proxyList() {
@@ -113,9 +153,40 @@
     }
     /* 右栏「可控制」用：后端已过滤，只剩检测到的 */
     function proxyDetected() {
-        if (CFG.proxies_detected && CFG.proxies_detected.length) return CFG.proxies_detected;
-        return (CFG.proxies && CFG.proxies.length) ? CFG.proxies : INIT.proxies;
+        var list = (CFG.proxies_detected && CFG.proxies_detected.length)
+            ? CFG.proxies_detected.slice()
+            : ((CFG.proxies && CFG.proxies.length) ? CFG.proxies.slice() : INIT.proxies.slice());
+        /* 自定义目标始终保留在列表里：用户既然选过，就不该因为一次探测失败而消失 */
+        var i, j, found;
+        for (i = 0; i < CUSTOM.length; i++) {
+            found = false;
+            for (j = 0; j < list.length; j++) if (list[j].target === CUSTOM[i]) found = true;
+            if (!found)
+                list.push({ target: CUSTOM[i], state: 'not_installed', configured: false, running: false });
+        }
+        return list;
     }
+    /* 自定义代理（搜索结果里选中的、预设之外的程序） */
+    function isCustom(t) {
+        var i;
+        for (i = 0; i < CUSTOM.length; i++) if (CUSTOM[i] === t) return true;
+        return false;
+    }
+    function addCustom(t) {
+        if (!t || PROXY_NAME[t]) return;          /* 预设的不算自定义 */
+        if (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(t)) return;
+        if (isCustom(t)) return;
+        CUSTOM.push(t);
+    }
+    function dropCustom(t) {
+        var out = [], i;
+        for (i = 0; i < CUSTOM.length; i++) if (CUSTOM[i] !== t) out.push(CUSTOM[i]);
+        CUSTOM = out;
+        if (CFG.proxy_target === t) CFG.proxy_target = 'auto';
+        applyUI(); markDirty();
+        toast('已移除自定义代理：' + t);
+    }
+
     /* 默认选中正在运行的代理 */
     function runningProxy() {
         var list = proxyDetected(), i;
@@ -171,47 +242,35 @@
                 + esc(actText(f, !cur)) + '</b>';
     }
 
-    /* 左栏代理下拉：全量候选，装没装都列出来。
-       按用户要求只显示程序名，**不显示任何状态** —— 状态统一放右栏「可控制」。 */
-    function renderProxySel() {
-        var menu = $('proxyMenu'), list = proxyList();
-        var html = '', i, p;
+    /* 左栏代理程序：和「左拨动作」一样用分段按钮，点一下即选。
+       【候选要列全】预设 8 个 + auto + 用户自定义过的，装没装都列出来 ——
+       用户要求「左边下拉的可以选择的很多，都列出来」，只列检测到的
+       会让这台只装了 daed 的机器看起来几乎没有可选项。
+       未安装的灰显且不可点（选了也控制不了），状态文字统一放右栏，这里只给名字。 */
+    function renderProxySeg() {
+        var seg = $('proxySeg');
+        if (!seg) return;
+        var list = proxyList(), html = '', i, p;
         for (i = 0; i < list.length; i++) {
             p = list[i];
             var nm = PROXY_NAME[p.target] || p.target;
-            html += '<div class="opt" data-v="' + esc(p.target)
-                + '" onclick="pickProxy(\'' + esc(p.target) + '\')">' + esc(nm) + '</div>';
+            var dead = (p.state === 'not_installed');
+            html += '<button type="button" data-v="' + esc(p.target) + '"'
+                + (dead ? ' class="dim" disabled title="未安装"'
+                        : ' onclick="pickProxy(\'' + esc(p.target) + '\')"')
+                + '>' + esc(nm) + '</button>';
         }
-        menu.innerHTML = html;
-        $('proxyLabel').textContent = PROXY_NAME[CFG.proxy_target] || CFG.proxy_target;
-        markSelCur('proxyMenu', CFG.proxy_target);
+        seg.innerHTML = html;
+        setSegActive('proxySeg', CFG.proxy_target);
     }
 
-    /* 灯名胶囊：渲染到右栏，蓝灯/白灯都可点击多选 */
-    function ledPickHtml() {
-        var list = (CFG.leds && CFG.leds.length) ? CFG.leds : INIT.leds;
-        var picked = ledList(CFG.led_name);
-        var html = '', i;
-        for (i = 0; i < list.length; i++) {
-            var nm = list[i];
-            var has = picked.indexOf(nm) >= 0;
-            html += '<span class="ledpick' + (has ? ' on' : '') + '" data-led="' + esc(nm) + '" title="'
-                + esc(nm) + '">' + esc(ledLabel(nm)) + '</span>';
-        }
-        return html;
-    }
-    function wireLedPicks() {
-        var chips = document.querySelectorAll('#capBox .ledpick'), i;
-        for (i = 0; i < chips.length; i++)
-            chips[i].onclick = function () { toggleLed(this.getAttribute('data-led')); };
-    }
-    function toggleLed(name) {
-        var picked = ledList(CFG.led_name), idx = picked.indexOf(name);
-        if (idx >= 0) picked.splice(idx, 1); else picked.push(name);
-        CFG.led_name = picked.join(' ');
+    /* 灯光模式三选一：三张可点选的卡片，点哪张就是哪种模式 */
+    function pickLedMode(mode) {
+        CFG.led_mode = mode;
+        CFG.led_name = modeNames(mode).join(' ');
         applyUI();
         markDirty();
-        toast(picked.length ? ('已选 ' + picked.map(ledLabel).join('、')) : '未选择任何灯');
+        toast('灯光模式：' + ledModeNames());
     }
 
     /* 右栏「可控制」能力卡片 */
@@ -233,13 +292,23 @@
         }
 
         if (f === 'led') {
-            box.innerHTML =
-                '<div class="cap">' +
-                '<div class="cap-h"><span class="cap-n">可控制的灯</span></div>' +
-                '<div class="ledpicks">' + ledPickHtml() + '</div>' +
-                '<div class="cap-d" style="margin-top:9px">点击灯名可多选，蓝灯和白灯都能单独控制。' +
-                '<br>左拨：' + esc(actText(f, leftAction(f))) + '　·　右拨：' + esc(actText(f, !leftAction(f))) + '</div></div>';
-            wireLedPicks();
+            var cur = curLedMode(), i, m, names = modeNames(cur).join(' + ');
+            for (i = 0; i < LED_MODES.length; i++) {
+                m = LED_MODES[i];
+                var sel = (m.v === cur);
+                html += '<div class="cap pick' + (sel ? ' sel' : '') + '" data-ledmode="' + esc(m.v) + '">' +
+                    '<div class="cap-h"><span class="cap-n">' + esc(m.t) + '</span>' +
+                    (sel ? '<span class="pill run">当前所选</span>' : '') +
+                    '</div>' +
+                    '<div class="cap-d">' + esc(m.d) + '</div></div>';
+            }
+            html += '<div class="cap">' +
+                '<div class="cap-h"><span class="cap-n">受控灯</span>' +
+                '<span class="pill idle">' + esc(names || '—') + '</span></div>' +
+                '<div class="cap-d">左拨：<b>' + esc(actText(f, leftAction(f))) + '</b>' +
+                '　右拨：<b>' + esc(actText(f, !leftAction(f))) + '</b></div></div>';
+            box.innerHTML = html;
+            wireLedModePicks();
             return;
         }
 
@@ -255,9 +324,9 @@
             var st = PROXY_STATE[p.state] || PROXY_STATE.installed;
             var ctrl = '可启动 / 可关闭';
             if (p.target === 'auto')
-                ctrl = '点此选择：按运行状态自动挑一个代理，可由滑块启停';
+                ctrl = '按运行状态自动挑一个代理，可由滑块启停';
             else if (p.state === 'not_installed')
-                ctrl = '未安装，无法控制';
+                ctrl = '未安装或启停脚本缺失，无法控制';
             else if (p.state === 'conflict')
                 ctrl = '检测到多个插件同时运行，无法确定控制目标';
             var sel = (CFG.proxy_target === p.target);
@@ -266,6 +335,10 @@
                 '<div class="cap-h"><span class="cap-n">' + esc(nm) + '</span>' +
                 '<span class="pill ' + st.c + '">' + st.t + '</span>' +
                 (sel ? '<span class="pill run">当前所选</span>' : '') +
+                (isCustom(p.target)
+                    ? '<span class="cap-x" onclick="event.stopPropagation();dropCustom(\''
+                        + esc(p.target) + '\')">移除</span>'
+                    : '') +
                 '</div>' +
                 '<div class="cap-d">' + esc(ctrl) + '</div></div>';
         }
@@ -277,6 +350,24 @@
         var cards = document.querySelectorAll('#capBox .cap.pick'), i;
         for (i = 0; i < cards.length; i++)
             cards[i].onclick = function () { pickProxy(this.getAttribute('data-proxy')); };
+    }
+    function wireLedModePicks() {
+        var cards = document.querySelectorAll('#capBox .cap[data-ledmode]'), i;
+        for (i = 0; i < cards.length; i++)
+            cards[i].onclick = function () { pickLedMode(this.getAttribute('data-ledmode')); };
+    }
+
+    /* 开关演示右侧：RESET 三个手势当前绑定了什么 */
+    var RESET_LABEL = { disabled: '禁用', led: 'LED', wifi: '无线', reboot: '重启' };
+    var RESET_IDS = { single: 'dsSingle', double: 'dsDouble', triple: 'dsTriple' };
+    function renderResetSummary() {
+        RESET_GESTURES.forEach(function (g) {
+            var el = $(RESET_IDS[g]);
+            if (!el) return;
+            var v = resetVal(g);
+            el.textContent = RESET_LABEL[v] || v;
+            el.className = 'ds-v' + (v === 'disabled' ? ' off' : '');
+        });
     }
 
     function applyUI() {
@@ -292,11 +383,12 @@
         var proxyItem = $('proxyItem');
         if (proxyItem) {
             proxyItem.style.display = isProxy ? 'block' : 'none';
-            if (isProxy) renderProxySel();
+            if (isProxy) renderProxySeg();
         }
 
         renderActSeg();
         renderCap(f);
+        renderResetSummary();
 
         /* 演示图位置（纯展示，无模拟） */
         var sw = $('swg');
@@ -348,27 +440,46 @@
     }
 
     /* ===== 脏状态 ===== */
+    /* 这些字段是「实时状态」不是「用户配置」：每 3 秒刷新一次，
+       不能因为它们变了就把保存按钮点亮（否则什么都没改也是脏的）。 */
+    var VOLATILE = {
+        switch_position: 1, blue_led: 1, white_led: 1,
+        proxies: 1, proxies_detected: 1, leds: 1, proxies_custom: 1,
+        reset_status: 1, proxy_status: 1
+    };
     function isDirty() {
         var keys = Object.keys(SAVED), i;
-        for (i = 0; i < keys.length; i++)
+        for (i = 0; i < keys.length; i++) {
+            if (VOLATILE[keys[i]]) continue;
             if (JSON.stringify(CFG[keys[i]]) !== JSON.stringify(SAVED[keys[i]])) return true;
+        }
+        /* 自定义代理的增删也算改动（哪怕当前选中的目标没变） */
+        if (CUSTOM.join(' ') !== SAVED_CUSTOM.join(' ')) return true;
         return false;
     }
+    /* 与风扇控制一致：左边胶囊常驻显示「已同步 / 有未保存的修改」，
+       右边「放弃修改 / 保存」仅在脏时可用；「保存并应用」任何时候都能点
+       （即使没有改动，也可以用来把当前配置立刻重新执行一遍）。 */
     function updateDirty() {
-        var d = isDirty(), btn = $('btnApply');
-        if (d) {
-            btn.classList.add('dirty'); btn.disabled = false;
-            $('dirtyNote').style.display = 'inline-flex';
-        } else {
-            btn.classList.remove('dirty'); btn.disabled = true;
-            $('dirtyNote').style.display = 'none';
-        }
+        var d = isDirty();
+        var note = $('dirtyNote');
+        note.className = 'pill ' + (d ? 'dirty' : 'idle');
+        note.innerHTML = '<i></i>' + (d ? '有未保存的修改' : '已同步');
+        $('saveHint').textContent = d
+            ? '「保存」只写配置；「保存并应用」还会立刻按当前位置执行一次'
+            : '改动后需点击「保存」或「保存并应用」';
+        $('btnRevert').disabled = !d;
+        $('btnSave').disabled = !d;
+        $('btnApply').classList.toggle('dirty', d);
     }
     function markDirty() { updateDirty(); }
-    function doRevert() { CFG = clone(SAVED); applyUI(); toast('已放弃修改'); }
+    function doRevert() { CFG = clone(SAVED); CUSTOM = (SAVED_CUSTOM || []).slice(); applyUI(); toast('已放弃修改'); }
 
-    /* ===== 保存 / 轮询 ===== */
-    function doSave() {
+    /* ===== 保存 / 轮询 =====
+       两个按钮共用这一份表单：
+         doSave()  -> action_save  ：只写配置（灯态会顺带对齐，不动 Wi-Fi / 代理）
+         doApply() -> action_apply ：写配置 + 立刻按当前开关位置执行一次动作 */
+    function saveForm() {
         var fd = new FormData();
         fd.append('led_enabled', CFG.led_enabled ? '1' : '0');
         fd.append('wifi_enabled', CFG.wifi_enabled ? '1' : '0');
@@ -380,28 +491,96 @@
         fd.append('wifi_right_action', CFG.wifi_left_action ? '0' : '1');
         fd.append('proxy_left_action', CFG.proxy_left_action ? '1' : '0');
         fd.append('proxy_right_action', CFG.proxy_left_action ? '0' : '1');
-        fd.append('led_name', CFG.led_name);
+        fd.append('led_mode', curLedMode());
+        fd.append('led_name', modeNames(curLedMode()).join(' '));
         RESET_GESTURES.forEach(function (g) {
             fd.append('reset_' + g + '_enabled', CFG['reset_' + g + '_enabled'] ? '1' : '0');
             fd.append('reset_' + g + '_action', CFG['reset_' + g + '_action']);
         });
-        fetch(saveUrl, { method: 'POST', body: fd, credentials: 'same-origin' })
+        /* 自定义代理整份回传，后端按这份覆盖 UCI list proxy_custom */
+        fd.append('proxy_custom', CUSTOM.join(' '));
+        return fd;
+    }
+
+    function postSave(url, okMsg) {
+        fetch(url, { method: 'POST', body: saveForm(), credentials: 'same-origin' })
             .then(function (r) { return r.json(); })
             .then(function (j) {
                 if (j && j.success) {
-                    SAVED = clone(CFG); updateDirty(); toast('已保存'); poll();
+                    SAVED = clone(CFG); SAVED_CUSTOM = CUSTOM.slice();
+                    updateDirty(); toast(okMsg); poll();
                 } else {
                     toast('保存失败：' + ((j && j.error) ? j.error : '未知错误'));
                 }
             })
             .catch(function () { toast('保存请求失败'); });
     }
+    function doSave() { postSave(saveUrl, '已保存（配置已写入）'); }
+    function doApply() { postSave(applyUrl, '已保存并应用'); }
+
+    /* ===== 自定义代理搜索 ===== */
+    var SRC_LABEL = { initd: '启停脚本', config: '配置文件', opkg: '已安装包' };
+    function srcText(arr) {
+        var out = [], i;
+        if (!arr) return '';
+        for (i = 0; i < arr.length; i++) out.push(SRC_LABEL[arr[i]] || arr[i]);
+        return out.join(' · ');
+    }
+    function doProxySearch() {
+        var kw = ($('proxyKw').value || '').replace(/^\s+|\s+$/g, '');
+        if (!kw) { toast('先输入关键词，比如 xray、clash、sing-box'); return; }
+        var btn = $('btnProxyFind');
+        btn.disabled = true; btn.textContent = '检测中';
+        var fd = new FormData();
+        fd.append('kw', kw);
+        fetch(searchUrl, { method: 'POST', body: fd, credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+                btn.disabled = false; btn.textContent = '检测';
+                if (j && j.success) renderFind(j.items || []);
+                else toast('检测失败：' + ((j && j.error) ? j.error : '未知错误'));
+            })
+            .catch(function () {
+                btn.disabled = false; btn.textContent = '检测';
+                toast('检测请求失败');
+            });
+    }
+    function renderFind(items) {
+        var box = $('proxyFind'), html = '', i, it;
+        if (!items.length) {
+            box.innerHTML = '<div class="hint">系统上没有找到名字相近的程序，换个关键词试试。</div>';
+            return;
+        }
+        for (i = 0; i < items.length; i++) {
+            it = items[i];
+            var sel = (CFG.proxy_target === it.target);
+            var can = !!it.has_init;
+            html += '<div class="frow' + (can ? ' click' : '') + (sel ? ' sel' : '') + '"'
+                + (can ? ' onclick="pickProxyFind(\'' + esc(it.target) + '\')"' : '') + '>'
+                + '<span class="fn">' + esc(it.label) + '</span>'
+                + '<span class="fsrc">' + esc(srcText(it.src)) + '</span>'
+                + (can
+                    ? '<span class="fbtn">' + (sel ? '已选择' : '选择') + '</span>'
+                    : '<span class="fbtn grey">无启停脚本</span>')
+                + '</div>';
+        }
+        box.innerHTML = html;
+    }
+    /* 选中搜索结果：预设之外的记为自定义，保存时一起回传 */
+    function pickProxyFind(name) {
+        addCustom(name);
+        CFG.proxy_target = name;
+        applyUI(); markDirty();
+        toast('已选择：' + name + '　（记得保存）');
+    }
 
     function mergeAll(d) {
         for (var k in d) if (d[k] !== undefined && d[k] !== null) CFG[k] = d[k];
         syncDerived(CFG);
+        CUSTOM = (d.proxies_custom || []).slice();
         applyProxyDefault();   /* 首次进入：默认选中正在运行的代理 */
         SAVED = clone(CFG);
+        SAVED_CUSTOM = CUSTOM.slice();
     }
     function mergeLive(d) {
         CFG.switch_position = d.switch_position;
@@ -410,6 +589,7 @@
         if (d.proxies) CFG.proxies = d.proxies;
         if (d.proxies_detected) CFG.proxies_detected = d.proxies_detected;
         if (d.leds) CFG.leds = d.leds;
+        if (d.proxies_custom) CUSTOM = d.proxies_custom.slice();
         if (isDirty()) return;
         CFG.led_enabled = d.led_enabled;
         CFG.wifi_enabled = d.wifi_enabled;
@@ -419,12 +599,30 @@
         CFG.proxy_left_action = d.proxy_left_action;
         CFG.proxy_target = d.proxy_target;
         CFG.led_name = d.led_name;
+        CFG.led_mode = d.led_mode;
         RESET_GESTURES.forEach(function (g) {
             CFG['reset_' + g + '_enabled'] = d['reset_' + g + '_enabled'];
             CFG['reset_' + g + '_action'] = d['reset_' + g + '_action'];
         });
         syncDerived(CFG);
         SAVED = clone(CFG);
+    }
+
+    /* 恢复默认设置：后端直接写回出厂默认，成功后重新拉一次配置 */
+    function doDefaults() {
+        if (!window.confirm('确定恢复默认设置？\n\n滑块将变为无功能，LED 档只控蓝灯，RESET 三个手势全部禁用。')) return;
+        fetch(defaultsUrl, { method: 'POST', credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+                if (j && j.success) {
+                    firstLoad = true;      /* 让下一次 poll 全量覆盖本地状态 */
+                    toast('已恢复默认设置');
+                    poll();
+                } else {
+                    toast('恢复失败：' + ((j && j.error) ? j.error : '未知错误'));
+                }
+            })
+            .catch(function () { toast('恢复请求失败'); });
     }
 
     function poll() {
@@ -445,6 +643,9 @@
         var root = $('gl');
         dataUrl = root.getAttribute('data-url');
         saveUrl = root.getAttribute('data-save-url');
+        applyUrl = root.getAttribute('data-apply-url');
+        searchUrl = root.getAttribute('data-search-url');
+        defaultsUrl = root.getAttribute('data-defaults-url');
 
         document.addEventListener('click', function (e) {
             if (!e.target.closest('#gl .sel')) closeSels();
@@ -457,6 +658,11 @@
         window.pickReset = pickReset;
         window.doRevert = doRevert;
         window.doSave = doSave;
+        window.doApply = doApply;
+        window.doDefaults = doDefaults;
+        window.doProxySearch = doProxySearch;
+        window.pickProxyFind = pickProxyFind;
+        window.dropCustom = dropCustom;
 
         applyUI();
         poll();
