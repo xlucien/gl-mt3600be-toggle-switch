@@ -1,6 +1,13 @@
 {#
  luci-app-mt3600be-toggle —— ucode 模板（GL 原厂风格）
 
+ 视觉规范与「风扇控制」页（fancontrol.ut）保持一致：
+   - 圆角只有四档：--r-card 卡片外框 / --r-box 盒子·按钮·凹槽外框
+                  / --r-ctl 槽内按键·输入控件 / --r-pill 胶囊·开关
+   - 配色同一套令牌：--brand 主色、--brand-soft 浅底、--ok 成功、--warn 待保存、--hot 危险
+   - 分段控件 = 浅灰凹槽 + 选中项白色浮起小块（不加黑环）
+   - 保存按钮 = .btn.primary，有未保存改动时转琥珀色 .dirty
+
  布局：
    1. 开关演示 —— 纯状态展示，不可点击、不做模拟
    2. 保存栏 —— 单独一栏，放在开关演示下面
@@ -17,152 +24,174 @@
 {% include('header') %}
 
 <style>
-    #gl { --bg:#f2f3f5; --card:#ffffff; --line:#ebedf0; --text:#26313e; --muted:#8a94a6;
-          --accent:#5b6efa; --apply:#6a7bfa; --teal:#16b8a8; --warn:#f59e0b; --ok:#22a45d;
+    #gl { --bg:#f4f6f9; --card:#ffffff; --line:#e8ecf2; --text:#1c2333; --muted:#8a94a6;
+          --brand:#2e7bf0; --brand-soft:#eaf2ff; --ok:#22a45d; --ok-soft:#e8f7ee;
+          --warn:#f59e0b; --hot:#ef4444;
+          /* 圆角体系：全页面只有这四档，新增控件从这里取值，不要临时写数字 */
+          --r-card:12px; --r-box:10px; --r-ctl:8px; --r-pill:999px;
           font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Roboto,sans-serif;
-          background:var(--bg); color:var(--text); padding:20px 24px; line-height:1.5;
+          background:var(--bg); color:var(--text); padding:16px; line-height:1.5;
           -webkit-font-smoothing:antialiased; }
     #gl * { box-sizing:border-box; }
-    #gl button { font-family:inherit; }
+
+    /* ===== 主题防御：抹掉 LuCI 主题强加的黑边 =====
+       argon 主题有 `.btn,button,select,input{border:1px solid #3c3c3c !important}`，
+       带 !important 且会命中面板内所有按键/输入框。这里用同款 !important 压回去，
+       需要保留描边的 .btn 在下面单独恢复。 */
     #gl button, #gl input, #gl select, #gl textarea { border:0 !important; outline:0; }
-    #gl input[type=text] { border:1px solid var(--line) !important; border-radius:10px !important; }
+    #gl input[type=text], #gl input[type=number] { border-radius:var(--r-ctl) !important; }
 
-    #gl .wrap { max-width:1080px; margin:0 auto; }
+    #gl .wrap { max-width:1120px; margin:0 auto; }
 
-    #gl .pghead { margin-bottom:16px; }
-    #gl .pgtitle { font-size:20px; font-weight:700; letter-spacing:.3px; }
-    #gl .pgsub { font-size:13px; color:var(--muted); margin-top:3px; }
+    #gl .pghead { margin-bottom:14px; }
+    #gl .pgtitle { font-size:19px; font-weight:700; letter-spacing:.3px; }
+    #gl .pgsub { font-size:12.5px; color:var(--muted); margin-top:3px; }
 
-    #gl .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
-                padding:18px 20px; margin-bottom:16px; }
-    #gl .card-h { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
-    #gl .card-t { font-size:15px; font-weight:700; }
+    #gl .card { background:var(--card); border:1px solid var(--line); border-radius:var(--r-card);
+                padding:16px 18px; margin-bottom:14px; }
+    #gl .card-h { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+    #gl .card-t { font-size:14.5px; font-weight:650; }
     #gl .card-s { font-size:12px; color:var(--muted); }
 
     /* ===== 保存栏（单独一栏） ===== */
-    #gl .applybar { display:flex; align-items:center; justify-content:space-between; gap:14px;
-                    background:var(--card); border:1px solid var(--line); border-radius:14px;
-                    padding:12px 20px; margin-bottom:16px; flex-wrap:wrap; }
-    #gl .applybar .ab-l { display:flex; align-items:center; gap:14px; }
-    #gl .note { font-size:13px; color:var(--warn); display:none; align-items:center; gap:6px; }
-    #gl .note i { width:7px; height:7px; border-radius:50%; background:var(--warn); display:inline-block; }
-    #gl .btnApply { border:0; background:#cfd4e6 !important; color:#fff; border-radius:999px;
-                    padding:10px 34px; font-size:14px; font-weight:700; cursor:not-allowed;
-                    transition:all .15s; }
-    #gl .btnApply.on { background:var(--apply) !important; cursor:pointer;
-                       box-shadow:0 4px 14px rgba(106,123,250,.4); }
-    #gl .btnApply.on:hover { background:#5a6bf0 !important; }
-    #gl .btnRevert { border:0; background:transparent !important; color:var(--muted); font-size:13px;
-                     font-weight:600; cursor:pointer; padding:6px 4px; }
-    #gl .btnRevert:hover { color:var(--text); }
+    #gl .savebar { display:flex; align-items:center; justify-content:space-between; gap:12px;
+                   padding:12px 18px; flex-wrap:wrap; }
+    #gl .sb-left { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    #gl .sb-right { display:flex; gap:8px; }
+    #gl .btn { border:1px solid #e6eaf1 !important; background:#fff; border-radius:var(--r-box); padding:8px 20px;
+               font-family:inherit; font-size:13px; font-weight:600; color:var(--text);
+               cursor:pointer; transition:all .15s; box-shadow:0 1px 2px rgba(16,24,40,.05); }
+    #gl .btn:hover { border-color:#d3dae5 !important; background:#fcfdff; }
+    #gl .btn:active { background:#f4f6fa; }
+    #gl .btn.primary { background:var(--brand); border-color:var(--brand) !important; color:#fff;
+                       box-shadow:0 1px 3px rgba(46,123,240,.28), 0 4px 12px rgba(46,123,240,.18); }
+    #gl .btn.primary:hover { background:#2b73e4; border-color:#2b73e4 !important; color:#fff; }
+    /* 有未保存改动：主按钮转琥珀色，一眼看出还欠一次保存 */
+    #gl .btn.primary.dirty { background:var(--warn); border-color:var(--warn) !important;
+                             box-shadow:0 1px 3px rgba(245,158,11,.28), 0 4px 12px rgba(245,158,11,.18); }
+    #gl .btn.primary.dirty:hover { background:#e08f08; border-color:#e08f08 !important; color:#fff; }
+    #gl .btn[disabled] { cursor:not-allowed; opacity:.55; }
+    #gl .btn.ghost { border-color:transparent !important; background:transparent; color:var(--muted);
+                     box-shadow:none; padding:8px 10px; }
+    #gl .btn.ghost:hover { color:var(--text); background:#f4f6fa; }
+
+    /* 胶囊标签 */
+    #gl .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 11px; border-radius:var(--r-pill);
+                font-size:12px; font-weight:600; }
+    #gl .pill i { width:7px; height:7px; border-radius:50%; background:currentColor; }
+    #gl .pill.run  { background:var(--ok-soft); color:var(--ok); }
+    #gl .pill.idle { background:#f1f3f7; color:var(--muted); }
+    #gl .pill.err  { background:#fdecec; color:var(--hot); }
+    #gl .pill.conf { background:#fdf1dc; color:var(--warn); }
 
     /* ===== 开关演示（纯展示） ===== */
-    #gl .demo { display:flex; align-items:center; gap:28px; flex-wrap:wrap; }
-    #gl .swg { display:flex; width:272px; height:112px; border-radius:22px; background:#e9ebf0;
+    #gl .demo { display:flex; align-items:center; gap:24px; flex-wrap:wrap; }
+    #gl .swg { display:flex; width:272px; height:112px; border-radius:var(--r-box); background:#eef1f6;
                padding:10px; gap:10px; user-select:none; flex:none; }
-    #gl .swgHalf { width:0; flex:1 1 0; height:92px; border:1px solid transparent; border-radius:14px;
+    #gl .swgHalf { width:0; flex:1 1 0; height:92px; border:1px solid transparent; border-radius:var(--r-ctl);
                    background:#fff; color:#9aa3b2; font-size:15px; font-weight:700;
                    display:flex; flex-direction:column; align-items:center; justify-content:center;
                    gap:6px; position:relative; }
     #gl .swgHalf .ic { font-size:22px; line-height:1; }
     #gl .swgHalf .lb { line-height:1; }
     #gl .swgHalf .pos { display:none; font-size:11px; font-weight:700; line-height:1;
-                        padding:3px 9px; border-radius:999px; background:#fff; color:var(--accent); }
+                        padding:3px 9px; border-radius:var(--r-pill); background:#fff; color:var(--brand); }
     #gl .swg.left  .swgHalf.left,
-    #gl .swg.right .swgHalf.right { background:var(--accent); color:#fff; border-color:var(--accent);
-                                    box-shadow:0 6px 16px rgba(91,110,250,.38); }
+    #gl .swg.right .swgHalf.right { background:var(--brand); color:#fff; border-color:var(--brand);
+                                    box-shadow:0 6px 16px rgba(46,123,240,.32); }
     #gl .swg.left  .swgHalf.left  .pos,
     #gl .swg.right .swgHalf.right .pos { display:inline-block; }
 
     #gl .demoInfo { flex:1; min-width:260px; }
-    #gl .demoPos { font-size:15px; font-weight:700; margin-bottom:10px; }
-    #gl .demoPos .tag { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px;
-                        font-weight:700; margin-left:6px; background:#eaf0ff; color:var(--accent); }
+    #gl .demoPos { font-size:14.5px; font-weight:700; margin-bottom:10px; }
+    #gl .demoPos .tag { display:inline-block; padding:2px 10px; border-radius:var(--r-pill); font-size:12px;
+                        font-weight:700; margin-left:6px; background:var(--brand-soft); color:var(--brand); }
     #gl .acts { display:flex; flex-direction:column; gap:7px; margin-bottom:11px; }
     #gl .actrow { display:flex; align-items:center; gap:9px; font-size:13.5px; }
-    #gl .akey { font-size:11.5px; font-weight:700; padding:3px 10px; border-radius:6px; flex:none; }
-    #gl .akeyL { background:#eaf0ff; color:var(--accent); }
-    #gl .akeyR { background:#eef0f4; color:#6b7688; }
+    #gl .akey { font-size:11.5px; font-weight:700; padding:3px 10px; border-radius:var(--r-ctl); flex:none; }
+    #gl .akeyL { background:var(--brand-soft); color:var(--brand); }
+    #gl .akeyR { background:#f1f3f7; color:#6b7688; }
     #gl .aval { font-weight:700; }
     #gl .aval.none { color:var(--muted); font-weight:600; }
-    #gl .strow { display:flex; gap:18px; flex-wrap:wrap; margin-bottom:10px; }
+    #gl .strow { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:10px; }
     #gl .st { font-size:13px; color:var(--muted); }
     #gl .stv { font-weight:700; margin-left:4px; }
     #gl .stv.on { color:var(--ok); }
     #gl .stv.off { color:var(--muted); }
-    #gl .hint { font-size:12.5px; color:var(--muted); }
+    #gl .hint { font-size:12px; color:var(--muted); }
 
     /* ===== 功能：左右两栏（高度固定，切换功能时不跳动） ===== */
-    #gl .fxrow { display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; }
+    #gl .fxrow { display:flex; gap:14px; align-items:stretch; flex-wrap:wrap; }
     #gl .fxcol { flex:1 1 320px; min-width:290px; height:328px; display:flex; flex-direction:column;
-                 background:#fafbfc; border:1px solid #f0f2f5; border-radius:12px; padding:0 16px 14px; }
+                 background:#fafbfc; border:1px solid var(--line); border-radius:var(--r-box); padding:0 14px 12px; }
     #gl .fxcap { font-size:12px; font-weight:700; color:var(--muted); letter-spacing:.4px;
                  padding:12px 0 8px; flex:none; }
     #gl .fxscroll { flex:1 1 auto; overflow-y:auto; overflow-x:hidden; padding-right:4px; }
     #gl .fxscroll::-webkit-scrollbar { width:6px; }
     #gl .fxscroll::-webkit-scrollbar-thumb { background:#dfe3ea; border-radius:3px; }
-    #gl .fxlist { display:flex; flex-direction:column; gap:12px; }
-    #gl .fxh { font-size:14px; font-weight:700; margin-bottom:8px; }
+    #gl .fxlist { display:flex; flex-direction:column; gap:14px; }
+    #gl .fxh { font-size:13.5px; font-weight:600; margin-bottom:7px; }
     #gl .fxctrls { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
-    #gl .fxnote { font-size:12.5px; color:var(--muted); line-height:1.7; margin-top:2px; }
+    #gl .fxnote { font-size:12.5px; color:var(--muted); line-height:1.7; margin-top:8px; }
     #gl .fxnote b { color:var(--text); font-weight:700; }
 
-    /* 能力卡片 */
-    #gl .cap { border:1px solid #e8ebf2; border-left:3px solid #d7dce8; background:#fff;
-               border-radius:10px; padding:11px 13px; margin-bottom:10px; }
+    /* 右栏条目：统一一张轻卡片，不用彩色左边框，避免花 */
+    #gl .cap { border:1px solid var(--line); background:#fff; border-radius:var(--r-box);
+               padding:11px 13px; margin-bottom:10px; }
     #gl .cap:last-child { margin-bottom:0; }
-    #gl .cap.ok   { border-left-color:var(--ok); }
-    #gl .cap.bad  { border-left-color:#d7dce8; opacity:.75; }
-    #gl .cap.warn { border-left-color:var(--warn); }
     #gl .cap-h { display:flex; align-items:center; gap:8px; margin-bottom:5px; flex-wrap:wrap; }
-    #gl .cap-n { font-size:14px; font-weight:700; }
-    #gl .pill { font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; }
-    #gl .pill.running { background:#e8f6ee; color:var(--ok); }
-    #gl .pill.idle    { background:#eef0f4; color:#6b7688; }
-    #gl .pill.err     { background:#fdecec; color:#d94a4a; }
-    #gl .pill.conf    { background:#fff4e2; color:#c47b12; }
-    #gl .cap-d { font-size:12.5px; color:var(--muted); line-height:1.6; }
+    #gl .cap-n { font-size:13.5px; font-weight:650; }
+    #gl .cap-d { font-size:12px; color:var(--muted); line-height:1.6; }
     #gl .cap-empty { font-size:13px; color:var(--muted); padding:16px 4px; }
+    /* 可点击选择的条目（代理） */
+    #gl .cap.pick { cursor:pointer; transition:all .15s; }
+    #gl .cap.pick:hover { border-color:#c3cdf5; background:#fbfcff; }
+    #gl .cap.pick.sel { border-color:var(--brand); background:var(--brand-soft); }
 
-    /* 下拉 / 文本 / 分段 */
+    /* 下拉（仅代理程序用，选项多） */
     #gl .sel { position:relative; display:inline-block; min-width:176px; }
     #gl .selbtn { width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px;
-                  background:#fff; border:1px solid var(--line) !important; border-radius:10px;
-                  padding:10px 14px; font-size:14px; font-weight:600; color:var(--text); cursor:pointer; }
-    #gl .selbtn .caret { width:9px; height:9px; border-right:2px solid #9aa3b2; border-bottom:2px solid #9aa3b2;
+                  background:#fff; border:1px solid var(--line) !important; border-radius:var(--r-box);
+                  padding:8px 14px; font-size:13.5px; font-weight:600; color:var(--text); cursor:pointer; }
+    #gl .selbtn .caret { width:8px; height:8px; border-right:2px solid #9aa3b2; border-bottom:2px solid #9aa3b2;
                          transform:rotate(45deg); transition:transform .2s; margin-top:-3px; flex:none; }
     #gl .sel.open .selbtn .caret { transform:rotate(-135deg); margin-top:3px; }
     #gl .menu { position:absolute; top:calc(100% + 6px); left:0; right:0; background:#fff;
-                border:1px solid var(--line); border-radius:10px; box-shadow:0 10px 28px rgba(20,30,60,.14);
-                padding:6px; z-index:50; display:none; }
+                border:1px solid var(--line); border-radius:var(--r-box);
+                box-shadow:0 10px 28px rgba(20,30,60,.14); padding:6px; z-index:50; display:none;
+                max-height:260px; overflow-y:auto; }
     #gl .sel.open .menu { display:block; }
-    #gl .opt { padding:9px 12px; border-radius:7px; font-size:14px; cursor:pointer; color:var(--text); }
-    #gl .opt:hover { background:#f4f5f8; }
-    #gl .opt.cur { color:var(--accent); font-weight:700; }
+    #gl .opt { padding:8px 12px; border-radius:var(--r-ctl); font-size:13.5px; cursor:pointer; color:var(--text); }
+    #gl .opt:hover { background:#f4f6fa; }
+    #gl .opt.cur { color:var(--brand); font-weight:700; background:var(--brand-soft); }
+    #gl .opt.dim { color:#aab2c0; }
+    #gl .opt.dim.cur { color:var(--brand); }
 
-    #gl .txt { background:#fff; border:1px solid var(--line) !important; border-radius:10px;
-               padding:9px 12px; font-family:inherit; font-size:14px; font-weight:600;
-               color:var(--text); width:230px; }
-    #gl .txt:focus { border-color:var(--accent) !important; box-shadow:0 0 0 3px rgba(91,110,250,.16); }
+    /* 分段控件：浅灰凹槽，选中项 = 白色浮起小块（不加黑环） */
+    #gl .seg { display:inline-flex; background:#f2f4f8; border-radius:var(--r-box); padding:3px; gap:2px; flex-wrap:wrap; }
+    #gl .seg button { border:0; background:transparent; padding:7px 16px; border-radius:var(--r-ctl);
+                      font-size:13px; font-weight:600; color:#7c8698; cursor:pointer; transition:all .15s; }
+    #gl .seg button:hover:not(.active) { color:var(--text); }
+    #gl .seg button.active { background:#fff; color:var(--text); box-shadow:0 1px 3px rgba(16,24,40,.08); }
+    #gl .seg.seg4 button { padding:7px 12px; }
 
-    #gl .seg { display:inline-flex; background:#eef0f4; border-radius:10px; padding:3px; gap:2px; }
-    #gl .seg button { border:0; background:transparent; min-width:78px; padding:8px 14px; border-radius:8px;
-                      font-size:13px; font-weight:600; color:#8a94a6; cursor:pointer; transition:all .15s; }
-    #gl .seg button.active { background:#fff; color:var(--text); box-shadow:0 1px 3px rgba(16,24,40,.12); }
-    #gl .seg.seg4 button { min-width:62px; padding:8px 10px; }
+    /* 灯名胶囊（放右栏，蓝灯/白灯都能点） */
+    #gl .ledpicks { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+    #gl .ledpick { font-size:12.5px; font-weight:600; padding:6px 14px; border-radius:var(--r-pill);
+                   background:#f2f4f8; color:#7c8698; cursor:pointer; transition:all .15s; }
+    #gl .ledpick:hover { background:#e8ecf3; color:var(--text); }
+    #gl .ledpick.on { background:var(--brand-soft); color:var(--brand); }
 
-    /* 多选灯（放在右栏「可控制」里，蓝灯/白灯都能点） */
-    #gl .ledpicks { display:flex; gap:8px; flex-wrap:wrap; margin-top:2px; }
-    #gl .ledpick { font-size:13px; font-weight:600; padding:7px 15px; border-radius:999px;
-                   background:#eef0f4; color:#6b7688; cursor:pointer; border:1px solid transparent;
-                   transition:all .15s; }
-    #gl .ledpick:hover { background:#e4e7ee; }
-    #gl .ledpick.on { background:#eaf0ff; color:var(--accent); border-color:#d3dcff; }
-    #gl .ledpick.on:hover { background:#dde6ff; }
+    /* ===== RESET 行 ===== */
+    #gl .row { display:flex; justify-content:space-between; align-items:center; gap:12px;
+               padding:10px 2px; border-bottom:1px dashed #eef1f6; }
+    #gl .row:last-child { border-bottom:0; }
+    #gl .lb { font-size:13.5px; font-weight:600; }
+    #gl .sub { font-size:11.5px; color:var(--muted); margin-top:2px; }
 
     #gl .toast { position:fixed; left:50%; bottom:34px; transform:translateX(-50%) translateY(20px);
-                 background:rgba(38,49,62,.94); color:#fff; padding:11px 22px; border-radius:999px;
-                 font-size:13.5px; font-weight:600; opacity:0; pointer-events:none; transition:all .25s; z-index:200; }
+                 background:#1c2333; color:#fff; padding:10px 18px; border-radius:var(--r-box); font-size:13px;
+                 font-weight:600; opacity:0; pointer-events:none; transition:all .25s; z-index:9999; }
     #gl .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
 </style>
 
@@ -207,19 +236,21 @@
     </div>
 
     <!-- 2. 保存栏（单独一栏） -->
-    <div class="applybar">
-        <div class="ab-l">
-            <span class="note" id="dirtyNote"><i></i>有未保存的修改</span>
-            <button type="button" class="btnRevert" onclick="doRevert()">放弃修改</button>
+    <div class="card savebar">
+        <div class="sb-left">
+            <span class="pill idle" id="dirtyNote" style="display:none"><i></i>有未保存的修改</span>
+            <button type="button" class="btn ghost" onclick="doRevert()">放弃修改</button>
         </div>
-        <button type="button" class="btnApply" id="btnApply" onclick="doSave()" disabled>保存</button>
+        <div class="sb-right">
+            <button type="button" class="btn primary" id="btnApply" onclick="doSave()" disabled>保存</button>
+        </div>
     </div>
 
     <!-- 3. 拨动开关功能：左栏功能选项 / 右栏可控制 -->
     <div class="card">
         <div class="card-h">
             <div class="card-t">拨动开关功能</div>
-            <div class="card-s">右拨动作自动取反，无需单独设置</div>
+            <div class="card-s">左栏选功能，右栏点卡片选择要控制的程序或灯</div>
         </div>
         <div class="fxrow">
 
@@ -283,34 +314,34 @@
             <div class="card-t">RESET 重置键</div>
             <div class="card-s">多击手势，独立于滑块</div>
         </div>
-        <div class="field" style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;border-bottom:1px solid #f1f3f6">
-            <div><div class="fl" style="font-size:14px;font-weight:600">单击</div><div class="fs" style="font-size:12px;color:#8a94a6;margin-top:2px">1 秒内按 1 次</div></div>
+        <div class="row">
+            <div><div class="lb">单击</div><div class="sub">1 秒内按 1 次</div></div>
             <div class="seg seg4" id="resetSingleSeg">
                 <button type="button" data-v="disabled" onclick="pickReset('single','disabled',this)">禁用</button>
-                <button type="button" data-v="led"      onclick="pickReset('single','led',this)">蓝灯</button>
+                <button type="button" data-v="led"      onclick="pickReset('single','led',this)">LED</button>
                 <button type="button" data-v="wifi"     onclick="pickReset('single','wifi',this)">无线</button>
                 <button type="button" data-v="reboot"   onclick="pickReset('single','reboot',this)">重启</button>
             </div>
         </div>
-        <div class="field" style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;border-bottom:1px solid #f1f3f6">
-            <div><div class="fl" style="font-size:14px;font-weight:600">双击</div><div class="fs" style="font-size:12px;color:#8a94a6;margin-top:2px">1 秒内按 2 次</div></div>
+        <div class="row">
+            <div><div class="lb">双击</div><div class="sub">1 秒内按 2 次</div></div>
             <div class="seg seg4" id="resetDoubleSeg">
                 <button type="button" data-v="disabled" onclick="pickReset('double','disabled',this)">禁用</button>
-                <button type="button" data-v="led"      onclick="pickReset('double','led',this)">蓝灯</button>
+                <button type="button" data-v="led"      onclick="pickReset('double','led',this)">LED</button>
                 <button type="button" data-v="wifi"     onclick="pickReset('double','wifi',this)">无线</button>
                 <button type="button" data-v="reboot"   onclick="pickReset('double','reboot',this)">重启</button>
             </div>
         </div>
-        <div class="field" style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0">
-            <div><div class="fl" style="font-size:14px;font-weight:600">三击</div><div class="fs" style="font-size:12px;color:#8a94a6;margin-top:2px">1 秒内按 3 次</div></div>
+        <div class="row">
+            <div><div class="lb">三击</div><div class="sub">1 秒内按 3 次</div></div>
             <div class="seg seg4" id="resetTripleSeg">
                 <button type="button" data-v="disabled" onclick="pickReset('triple','disabled',this)">禁用</button>
-                <button type="button" data-v="led"      onclick="pickReset('triple','led',this)">蓝灯</button>
+                <button type="button" data-v="led"      onclick="pickReset('triple','led',this)">LED</button>
                 <button type="button" data-v="wifi"     onclick="pickReset('triple','wifi',this)">无线</button>
                 <button type="button" data-v="reboot"   onclick="pickReset('triple','reboot',this)">重启</button>
             </div>
         </div>
-        <div class="hint" style="padding-top:6px">多击需在 1 秒内完成。「蓝灯」切换蓝灯亮灭、「无线」开关 WiFi、「重启」重启设备；选「禁用」则该手势不执行任何动作。长按 5 秒以上仍为恢复出厂设置。</div>
+        <div class="hint" style="padding-top:8px">多击需在 1 秒内完成。「LED」按当前状态切换受控 LED 的亮灭、「无线」开关 WiFi、「重启」重启设备；选「禁用」则该手势不执行任何动作。长按 5 秒以上仍为恢复出厂设置。</div>
     </div>
 
 </div>
@@ -319,4 +350,4 @@
 
 {% include('footer') %}
 
-<script src="/luci-static/resources/mt3600be-toggle/toggle.js?v=20260929c"></script>
+<script src="/luci-static/resources/mt3600be-toggle/toggle.js?v=20260929d"></script>

@@ -53,18 +53,24 @@ function proxy_status(target) {
     return result;
 }
 
-// 「可控制」面板用：逐个检测已安装的代理插件及其当前运行状态。
-// 第一个条目固定是「自动」，表示由脚本按运行/已配置/已安装依次推断。
-// 没检测到的插件（state == not_installed）直接丢弃，不出现在列表里。
+// 下拉框用：完整候选列表（自动 + 8 个插件），不管装没装都列出来。
 // 注意：ucode 里不能写 `for (let x in [ 'a', 'b' ])` 直接遍历数组字面量（不生效），
 // 必须先把数组放进变量再遍历。
 function proxy_list() {
     let targets = [ 'passwall', 'passwall2', 'openclash', 'ssrplus', 'nikki', 'daed', 'homeproxy', 'mihomo' ];
     let list = [{ target: 'auto', state: 'auto', configured: false, running: false }];
-    for (let target in targets) {
-        let st = proxy_status(target);
-        if (st.state == 'not_installed') continue;
-        push(list, st);
+    for (let target in targets)
+        push(list, proxy_status(target));
+    return list;
+}
+
+// 右栏「可控制」用：只保留实际检测到的插件（未安装的丢弃），这些条目可点击选择。
+function proxy_list_detected() {
+    let all = proxy_list();
+    let list = [];
+    for (let p in all) {
+        if (p.target != 'auto' && p.state == 'not_installed') continue;
+        push(list, p);
     }
     return list;
 }
@@ -87,6 +93,32 @@ function led_list() {
 
 function physical_state() {
     return trim(fs.readfile('/tmp/mt3600be-toggle-state') ?? '') == '1' ? '1' : '0';
+}
+
+// 只接受 /sys/class/leds 里真实存在的灯名，多个用空格分隔；去重后拼回字符串。
+// 页面只提交检测到的灯名，这里再兜一层，避免写进无效值导致 LED 完全不受控。
+//
+// 【ucode 坑】`for (let x in 数组)` 遍历出来的是**元素值**，不是下标
+// （这一点和 JS 的 for-in 给下标完全不同）。所以判定成员要直接比 `x == part`，
+// 写成 `known[x] == part` 会全部落空 —— 曾因此把每个灯名都当成非法值，
+// 回退到 known[0]，表现就是「页面选白灯，保存后还是蓝灯」。
+function valid_leds(value) {
+    let known = led_list();
+    let out = [];
+    let parts = split(trim(`${value ?? ''}`), /\s+/);
+    for (let part in parts) {
+        if (part == '') continue;
+        let ok = (length(known) == 0);
+        for (let k in known) if (k == part) ok = true;
+        if (!ok) continue;
+        let dup = false;
+        for (let o in out) if (o == part) dup = true;
+        if (!dup) push(out, part);
+    }
+    let s = '';
+    for (let p in out) s = (s == '') ? p : (s + ' ' + p);
+    if (s != '') return s;
+    return length(known) ? known[0] : cfg_get('led_name', 'blue:status');
 }
 
 // 直接读 debugfs 里 mode 引脚的真实电平，返回 '1'(HIGH/左) / '0'(LOW/右) / null。
@@ -135,6 +167,7 @@ function full_data() {
         proxy_right_action: cfg_bool('proxy_low_action', '1'),
         proxy_status: proxy_status(),
         proxies: proxy_list(),
+        proxies_detected: proxy_list_detected(),
         leds: led_list(),
         reset_single_enabled: cfg_bool('reset_single_enabled', '0'),
         reset_single_action: cfg_get('reset_single_action', 'wifi'),
@@ -173,6 +206,8 @@ function save(requested_action) {
 
     cur.set('mt3600be-toggle', 'main', 'global_enabled', new_global);
     cur.set('mt3600be-toggle', 'main', 'proxy_target', new_target);
+    // led_name 必须落盘，否则页面选的灯（比如白灯）保存后仍是旧值
+    cur.set('mt3600be-toggle', 'main', 'led_name', valid_leds(http.formvalue('led_name')));
     for (let gesture in [ 'single', 'double', 'triple' ])
         cur.set('mt3600be-toggle', 'main', `reset_${gesture}_action`, valid_reset(http.formvalue(`reset_${gesture}_action`) ?? 'wifi'));
     cur.commit('mt3600be-toggle');
