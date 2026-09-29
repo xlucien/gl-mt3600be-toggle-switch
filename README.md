@@ -82,6 +82,28 @@ LuCI 侧沿用 `luci.controller.toggle` / 菜单 `admin/system/toggle`（标题�
 视图已由 `www/luci-static/resources/view/toggle/{index.js,index.css}` 改为
 **ucode 模板** `usr/share/ucode/luci/template/toggle.ut`（GL 原厂风格，服务端渲染，无前端构建依赖）。
 
+模板只负责版式，交互逻辑全部放在外置脚本
+`www/luci-static/resources/mt3600be-toggle/toggle.js`。
+
+> **重要**：不要把 `<script>` 内联进 `toggle.ut`。ucode 模板引擎会把内联 JS 里的
+> `${...}`、模板字符串反引号和引号当作自身语法解析，直接报
+> `Unable to compile source file ... Syntax error: Unexpected token`。
+> 正确的分工是——模板输出 HTML + 用 `data-url` / `data-save-url` / `data-sim-url`
+> 三个属性传后端地址，外置 JS 读取这些属性并 `window.xxx = fn` 暴露给模板的 `onclick`。
+
+### 页面交互约定
+
+- **只暴露「左拨动作」**，右拨动作 = 左拨取反（保存时自动写入 `*_low_action`），
+  页面上「右拨动作」是只读派生值。
+- **功能选项右侧的第二个下拉**是「代理目标」，仅在功能选「代理」时出现。
+- 选完功能后，「可控制」栏实时显示该功能能控制的范围
+  （代理 → `代理程序启停 · <插件名>`；Wi-Fi → `2.4G / 5G 无线开关`；LED → `LED 亮灭 · <灯名>`）。
+- **开关演示图**左右两块强制等宽等高（`width:0` + `flex:1 1 0` + 固定高度），
+  当前受力侧显示「当前」角标，位置实时取自 GPIO 电平；点击任一侧会真实
+  `simulate` 一次并即时刷新右侧「左拨 / 右拨分别执行什么」。
+- **RESET 三个手势都带「禁用」**：`reset_*_enabled=0` + `reset_*_action`，
+  选「禁用」即该手势不执行任何动作（长按 5 秒的恢复出厂设置不受影响）。
+
 ## 依赖与精简
 
 `Makefile` 里声明的是：
@@ -255,6 +277,7 @@ rm -rf /etc/mt3600be-toggle.d
 rm -f /usr/share/ucode/luci/controller/toggle.uc /usr/share/luci/menu.d/toggle-switch.json
 rm -f /usr/share/ucode/luci/template/toggle.ut
 rm -rf /www/luci-static/resources/view/toggle
+rm -rf /www/luci-static/resources/mt3600be-toggle
 rm -f /tmp/luci-indexcache
 ```
 
@@ -275,7 +298,8 @@ usr/sbin/mt3600be-toggle-{apply,sync,wifi,proxy}
 usr/sbin/mt3600be-reset-control
 usr/libexec/mt3600be-{reset-button,delay}
 usr/share/ucode/luci/controller/toggle.uc
-usr/share/ucode/luci/template/toggle.ut    LuCI 页面（GL 原厂风格 ucode 模板）
+usr/share/ucode/luci/template/toggle.ut    LuCI 页面版式（GL 原厂风格 ucode 模板）
+www/luci-static/resources/mt3600be-toggle/toggle.js  页面交互逻辑（外置，勿内联）
 usr/share/luci/menu.d/toggle-switch.json
 Makefile                            编入固件用（DEPENDS 见上文）
 install.sh                          实机安装脚本
