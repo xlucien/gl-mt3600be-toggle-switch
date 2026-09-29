@@ -1,6 +1,6 @@
 {
     "admin/system/toggle": {
-        "title": "拨动开关设置",
+        "title": "按键控制",
         "order": 60,
         "action": {
             "type": "template",

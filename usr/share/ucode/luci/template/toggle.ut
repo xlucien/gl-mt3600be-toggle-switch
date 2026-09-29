@@ -2,9 +2,9 @@
  luci-app-mt3600be-toggle —— ucode 模板（GL 原厂风格）
 
  布局：
-   1. 保存栏置顶（有改动才可点「保存」）
-   2. 开关演示 —— 纯状态展示，不可点击、不做模拟
-   3. 拨动开关功能 —— 左栏「功能选项」/ 右栏「可控制」
+   1. 开关演示 —— 纯状态展示，不可点击、不做模拟
+   2. 保存栏 —— 单独一栏，放在开关演示下面
+   3. 拨动开关功能 —— 左栏「功能选项」/ 右栏「可控制」，高度固定
    4. RESET 重置键 —— 每个手势都可选「禁用」
 
  重要：本模板只输出版式，**不要**在这里内联 <script>。
@@ -39,7 +39,7 @@
     #gl .card-t { font-size:15px; font-weight:700; }
     #gl .card-s { font-size:12px; color:var(--muted); }
 
-    /* ===== 顶部保存栏 ===== */
+    /* ===== 保存栏（单独一栏） ===== */
     #gl .applybar { display:flex; align-items:center; justify-content:space-between; gap:14px;
                     background:var(--card); border:1px solid var(--line); border-radius:14px;
                     padding:12px 20px; margin-bottom:16px; flex-wrap:wrap; }
@@ -92,17 +92,20 @@
     #gl .stv.off { color:var(--muted); }
     #gl .hint { font-size:12.5px; color:var(--muted); }
 
-    /* ===== 功能：左右两栏 ===== */
-    #gl .fxrow { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
-    #gl .fxcol { flex:1 1 320px; min-width:290px;
-                 background:#fafbfc; border:1px solid #f0f2f5; border-radius:12px; padding:4px 16px 14px; }
+    /* ===== 功能：左右两栏（高度固定，切换功能时不跳动） ===== */
+    #gl .fxrow { display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; }
+    #gl .fxcol { flex:1 1 320px; min-width:290px; height:328px; display:flex; flex-direction:column;
+                 background:#fafbfc; border:1px solid #f0f2f5; border-radius:12px; padding:0 16px 14px; }
     #gl .fxcap { font-size:12px; font-weight:700; color:var(--muted); letter-spacing:.4px;
-                 padding:12px 0 8px; }
+                 padding:12px 0 8px; flex:none; }
+    #gl .fxscroll { flex:1 1 auto; overflow-y:auto; overflow-x:hidden; padding-right:4px; }
+    #gl .fxscroll::-webkit-scrollbar { width:6px; }
+    #gl .fxscroll::-webkit-scrollbar-thumb { background:#dfe3ea; border-radius:3px; }
     #gl .fxlist { display:flex; flex-direction:column; gap:12px; }
     #gl .fxh { font-size:14px; font-weight:700; margin-bottom:8px; }
     #gl .fxctrls { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
-    #gl .autoval { font-size:13.5px; font-weight:600; color:#6b7688; background:#f4f5f8;
-                   border:1px dashed #dfe3ea; border-radius:9px; padding:7px 13px; }
+    #gl .fxnote { font-size:12.5px; color:var(--muted); line-height:1.7; margin-top:2px; }
+    #gl .fxnote b { color:var(--text); font-weight:700; }
 
     /* 能力卡片 */
     #gl .cap { border:1px solid #e8ebf2; border-left:3px solid #d7dce8; background:#fff;
@@ -148,11 +151,14 @@
     #gl .seg button.active { background:#fff; color:var(--text); box-shadow:0 1px 3px rgba(16,24,40,.12); }
     #gl .seg.seg4 button { min-width:62px; padding:8px 10px; }
 
-    /* 多选灯 */
-    #gl .ledpicks { display:flex; gap:8px; flex-wrap:wrap; margin-top:9px; }
-    #gl .ledpick { font-size:12.5px; font-weight:600; padding:6px 13px; border-radius:999px;
-                   background:#eef0f4; color:#6b7688; cursor:pointer; border:1px solid transparent; }
+    /* 多选灯（放在右栏「可控制」里，蓝灯/白灯都能点） */
+    #gl .ledpicks { display:flex; gap:8px; flex-wrap:wrap; margin-top:2px; }
+    #gl .ledpick { font-size:13px; font-weight:600; padding:7px 15px; border-radius:999px;
+                   background:#eef0f4; color:#6b7688; cursor:pointer; border:1px solid transparent;
+                   transition:all .15s; }
+    #gl .ledpick:hover { background:#e4e7ee; }
     #gl .ledpick.on { background:#eaf0ff; color:var(--accent); border-color:#d3dcff; }
+    #gl .ledpick.on:hover { background:#dde6ff; }
 
     #gl .toast { position:fixed; left:50%; bottom:34px; transform:translateX(-50%) translateY(20px);
                  background:rgba(38,49,62,.94); color:#fff; padding:11px 22px; border-radius:999px;
@@ -166,20 +172,11 @@
 <div class="wrap">
 
     <div class="pghead">
-        <div class="pgtitle">拨动开关设置</div>
-        <div class="pgsub">配置物理拨动开关的功能与对应动作</div>
+        <div class="pgtitle">按键控制</div>
+        <div class="pgsub">配置物理拨动开关与 RESET 键的功能</div>
     </div>
 
-    <!-- 保存栏（置顶） -->
-    <div class="applybar">
-        <div class="ab-l">
-            <span class="note" id="dirtyNote"><i></i>有未保存的修改</span>
-            <button type="button" class="btnRevert" onclick="doRevert()">放弃修改</button>
-        </div>
-        <button type="button" class="btnApply" id="btnApply" onclick="doSave()" disabled>保存</button>
-    </div>
-
-    <!-- 开关演示（纯状态展示，不可点击、无模拟） -->
+    <!-- 1. 开关演示（纯状态展示，不可点击、无模拟） -->
     <div class="card">
         <div class="card-h">
             <div class="card-t">开关演示</div>
@@ -209,7 +206,16 @@
         </div>
     </div>
 
-    <!-- 拨动开关功能：左栏功能选项 / 右栏可控制 -->
+    <!-- 2. 保存栏（单独一栏） -->
+    <div class="applybar">
+        <div class="ab-l">
+            <span class="note" id="dirtyNote"><i></i>有未保存的修改</span>
+            <button type="button" class="btnRevert" onclick="doRevert()">放弃修改</button>
+        </div>
+        <button type="button" class="btnApply" id="btnApply" onclick="doSave()" disabled>保存</button>
+    </div>
+
+    <!-- 3. 拨动开关功能：左栏功能选项 / 右栏可控制 -->
     <div class="card">
         <div class="card-h">
             <div class="card-t">拨动开关功能</div>
@@ -217,69 +223,61 @@
         </div>
         <div class="fxrow">
 
-            <!-- 左栏 -->
+            <!-- 左栏：功能选项 -->
             <div class="fxcol">
                 <div class="fxcap">功能选项</div>
-                <div class="fxlist">
-                    <div id="funcItem">
-                        <div class="fxh">功能</div>
-                        <div class="fxctrls">
-                            <div class="sel" id="funcSel">
-                                <button type="button" class="selbtn" onclick="toggleSel('funcSel')">
-                                    <span id="funcLabel">无功能</span><span class="caret"></span>
-                                </button>
-                                <div class="menu" id="funcMenu">
-                                    <div class="opt" data-v="none"  onclick="pickFunc('none')">无功能</div>
-                                    <div class="opt" data-v="proxy" onclick="pickFunc('proxy')">代理</div>
-                                    <div class="opt" data-v="wifi"  onclick="pickFunc('wifi')">Wi-Fi</div>
-                                    <div class="opt" data-v="led"   onclick="pickFunc('led')">LED</div>
+                <div class="fxscroll">
+                    <div class="fxlist">
+                        <div id="funcItem">
+                            <div class="fxh">功能</div>
+                            <div class="fxctrls">
+                                <div class="sel" id="funcSel">
+                                    <button type="button" class="selbtn" onclick="toggleSel('funcSel')">
+                                        <span id="funcLabel">无功能</span><span class="caret"></span>
+                                    </button>
+                                    <div class="menu" id="funcMenu">
+                                        <div class="opt" data-v="none"  onclick="pickFunc('none')">无功能</div>
+                                        <div class="opt" data-v="proxy" onclick="pickFunc('proxy')">代理</div>
+                                        <div class="opt" data-v="wifi"  onclick="pickFunc('wifi')">Wi-Fi</div>
+                                        <div class="opt" data-v="led"   onclick="pickFunc('led')">LED</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
 
-                    <div id="proxyItem">
-                        <div class="fxh">代理程序</div>
-                        <div class="fxctrls">
-                            <div class="sel" id="proxySel">
-                                <button type="button" class="selbtn" onclick="toggleSel('proxySel')">
-                                    <span id="proxyLabel">自动</span><span class="caret"></span>
-                                </button>
-                                <div class="menu" id="proxyMenu"></div>
+                        <div id="proxyItem">
+                            <div class="fxh">代理程序</div>
+                            <div class="fxctrls">
+                                <div class="sel" id="proxySel">
+                                    <button type="button" class="selbtn" onclick="toggleSel('proxySel')">
+                                        <span id="proxyLabel">自动</span><span class="caret"></span>
+                                    </button>
+                                    <div class="menu" id="proxyMenu"></div>
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <div id="ledNameItem">
-                        <div class="fxh">控制的灯</div>
-                        <div class="fxctrls">
-                            <input type="text" class="txt" id="ledName" onchange="onText('led_name', this.value)">
+                        <div id="actItem">
+                            <div class="fxh">左拨动作</div>
+                            <div class="fxctrls"><div class="seg" id="actSeg"></div></div>
+                            <div class="fxnote" id="rightNote"></div>
                         </div>
-                        <div class="ledpicks" id="ledPicks"></div>
-                    </div>
-
-                    <div id="actItem">
-                        <div class="fxh">左拨动作</div>
-                        <div class="fxctrls"><div class="seg" id="actSeg"></div></div>
-                    </div>
-
-                    <div id="rightItem">
-                        <div class="fxh">右拨动作</div>
-                        <div class="fxctrls"><span class="autoval" id="rightAuto">—</span></div>
                     </div>
                 </div>
             </div>
 
-            <!-- 右栏 -->
+            <!-- 右栏：可控制 -->
             <div class="fxcol">
                 <div class="fxcap">可控制</div>
-                <div id="capBox"></div>
+                <div class="fxscroll">
+                    <div id="capBox"></div>
+                </div>
             </div>
 
         </div>
     </div>
 
-    <!-- RESET 重置键 -->
+    <!-- 4. RESET 重置键 -->
     <div class="card">
         <div class="card-h">
             <div class="card-t">RESET 重置键</div>
@@ -321,4 +319,4 @@
 
 {% include('footer') %}
 
-<script src="/luci-static/resources/mt3600be-toggle/toggle.js?v=20260929b"></script>
+<script src="/luci-static/resources/mt3600be-toggle/toggle.js?v=20260929c"></script>

@@ -55,13 +55,17 @@ function proxy_status(target) {
 
 // 「可控制」面板用：逐个检测已安装的代理插件及其当前运行状态。
 // 第一个条目固定是「自动」，表示由脚本按运行/已配置/已安装依次推断。
+// 没检测到的插件（state == not_installed）直接丢弃，不出现在列表里。
 // 注意：ucode 里不能写 `for (let x in [ 'a', 'b' ])` 直接遍历数组字面量（不生效），
 // 必须先把数组放进变量再遍历。
 function proxy_list() {
     let targets = [ 'passwall', 'passwall2', 'openclash', 'ssrplus', 'nikki', 'daed', 'homeproxy', 'mihomo' ];
     let list = [{ target: 'auto', state: 'auto', configured: false, running: false }];
-    for (let target in targets)
-        push(list, proxy_status(target));
+    for (let target in targets) {
+        let st = proxy_status(target);
+        if (st.state == 'not_installed') continue;
+        push(list, st);
+    }
     return list;
 }
 
