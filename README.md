@@ -102,9 +102,12 @@ LuCI 侧沿用 `luci.controller.toggle` / 菜单 `admin/system/toggle`（标题�
   切换功能时页面高度不跳动。
   - 左栏「功能选项」：功能下拉（无功能 / 代理 / Wi-Fi / LED）→ 选「代理」时其下方出现
     「代理程序」下拉 → 「左拨动作」分段按钮 + 一行文字说明左右拨各自的动作。
-  - 右栏「可控制」：随所选功能实时列出能控制什么。
-    - 代理：**只列检测到的插件**（`not_installed` 由控制器直接过滤掉），
+    「代理程序」下拉列出**全部 9 个候选**（自动 + 8 个插件），装没装都列出来，
+    但**只显示程序名、不带任何状态** —— 状态统一放右栏，避免两处重复。
+  - 右栏「可控制」：随所选功能实时列出能控制什么，条目**可直接点击选择**。
+    - 代理：只列**检测到的**（`proxies_detected`，`not_installed` 由控制器过滤掉），
       各带状态标签（运行中 / 未启用 / 异常 / 检测到多个）与可控性说明。
+      点卡片即把它设为「代理程序」，选中项浅蓝底 + 主色描边。
     - LED：**受控灯胶囊在右栏**，蓝灯 / 白灯都可点击多选，点击即写入 `led_name`。
     - Wi-Fi：说明控制的是 2.4G + 5G 及其快照恢复行为。
 - **代理默认选中正在运行的那个**：首次进入时若 `proxy_target` 为空或已不在检测列表中，
@@ -115,7 +118,7 @@ LuCI 侧沿用 `luci.controller.toggle` / 菜单 `admin/system/toggle`（标题�
 - **RESET 三个手势都带「禁用」**：`reset_*_enabled=0` + `reset_*_action`，
   选「禁用」即该手势不执行任何动作（长按 5 秒的恢复出厂设置不受影响）。
 
-### ucode 两个容易踩的坑
+### ucode 几个容易踩的坑（都是实际踩过并修好的）
 
 1. **不要把 `<script>` 内联进 `toggle.ut`**，也不要在模板里内联 `Object.assign()`
    之类含 `{}` 的 JS——模板引擎会把 `${...}`、反引号、引号以及相邻的 `{` `{`
@@ -126,6 +129,17 @@ LuCI 侧沿用 `luci.controller.toggle` / 菜单 `admin/system/toggle`（标题�
    再 `window.xxx = fn` 暴露给模板里的 `onclick`。
 2. **ucode 不能写 `for (let x in [ 'a', 'b' ])`** 直接遍历数组字面量（会静默不生效），
    必须先把数组赋给变量再遍历。`proxy_list()` / `led_list()` 都遵循这条。
+3. **`for (let x in 数组)` 遍历出来的是「元素值」，不是下标。**
+   这一条和 JS 的 `for-in`（给下标）**语义相反**，极易写错：
+   `for (let k in known) if (known[k] == part)` 会全部落空，
+   因为 `k` 已经是元素本身、`known[k]` 是 `undefined`。
+   正确写法是直接比 `if (k == part)`。
+   **`valid_leds()` 就栽在这上面**：每个灯名都被判为非法 → 回退到 `known[0]`，
+   现象就是「页面上选白灯，保存后 `led_name` 仍是 `blue:status`，白灯永远控不了」。
+4. **ucode 的函数声明没有提升。** `valid_leds()` 里调用 `led_list()`，
+   如果 `led_list()` 定义在 `valid_leds()` **之后**，运行时会直接抛
+   `Reference error: access to undeclared variable led_list`（整页 500）。
+   所以辅助函数必须定义在调用者之前——`led_list()` 现在排在 `valid_leds()` 上面。
 
 ## 依赖与精简
 
@@ -165,31 +179,41 @@ GL-MT3600BE 有两颗状态灯，都是 `max_brightness=1` 的二值灯（没有
 
 | LED | 设备树别名 | 角色 | 本包的处理 |
 | --- | --- | --- | --- |
-| `blue:status`（gpio-560，ACTIVE_LOW） | `led-running` | 运行指示 | **由滑块 LED 档控制亮灭** |
-| `white:status`（gpio-561，ACTIVE_LOW） | `led-boot` | 开机/升级指示 | **开机后强制熄灭，与滑块无关** |
+| `blue:status`（gpio-560，ACTIVE_LOW） | `led-running` | 运行指示 | 可由滑块 LED 档控制亮灭 |
+| `white:status`（gpio-561，ACTIVE_LOW） | `led-boot` | 开机/升级指示 | 可由滑块 LED 档控制亮灭 |
 
-对应两个配置项：
+**两颗灯都能被控制**，由页面右栏「可控制的灯」里的胶囊点击多选，落盘到同一个配置项：
 
 ```
 option boot_off_leds 'white:status'   # 每次开机强制熄灭的灯（空格分隔），不受滑块影响
-option led_name      'blue:status'    # LED 档控制的灯（空格分隔，可多颗）
+option led_name      'white:status'    # LED 档控制的灯（空格分隔，可多颗）
 ```
 
-行为：
+> `boot_off_leds` 只在**每次开机**时压灭白灯（那是 `led-boot` 的本职指示），
+> 开机后不再干预；之后滑块/RESET 想点就点，两者不冲突。
 
-- **白灯**：开机过程（preinit/升级）仍会由系统闪一下——那是 `led-boot` 的本职；
-  开机结束后 S99 的 `force_boot_off_leds()` 会把它压灭并保持，之后滑块怎么拨都不影响它。
-- **蓝灯**：跟随滑块。左拨（高电平）= 亮，右拨（低电平）= 灭（`led_high_action/led_low_action`）。
-- **RESET 单击"切换灯光"**：同样只切 `led_name` 里的灯，当前即蓝灯。
-- **开机同步**：S99 `mt3600be-toggle-sync` 读一次 debugfs 的实际电平，把蓝灯对齐到滑块当前位置。
+行为（以 `led_name='white:status'` 为例）：
 
-开机时序：S95 `done` 先点亮蓝灯（`led-running`）→ S99 强制白灯灭 + 按滑块位置同步蓝灯。
+- **滑块 LED 档**：左拨（高电平）= 亮，右拨（低电平）= 灭
+  （`led_high_action` / `led_low_action`）；改成两颗就是 `led_name='blue:status white:status'`。
+- **RESET 单击"切换 LED"**：切 `led_name` 里的灯，按**每颗灯各自的当前亮度**取反，
+  动作结果记录为 `led_on` / `led_off`（想切哪颗就把哪颗选进 `led_name`）。
+- **开机同步**：S99 `mt3600be-toggle-sync` 读一次 debugfs 的实际电平，把灯对齐到滑块当前位置。
+
+开机时序：S95 `done` 先点亮蓝灯（`led-running`）→ S99 强制 `boot_off_leds` 里的灯灭
++ 按滑块位置同步 `led_name` 的灯。
+
+> **曾踩的坑**：控制器 `save()` 早期漏写 `led_name`，页面选白灯保存后仍是旧值，
+> 表现就是"白灯根本控不了"。已修：`save()` 会经 `valid_leds()` 校验并落盘
+> （详见上文「ucode 几个容易踩的坑」第 3 条）。
 所以蓝灯在开机最后几秒会先亮，随后按滑块位置定格。
 
 想改策略时：
 
 ```sh
 uci set mt3600be-toggle.main.led_name='blue:status white:status'   # 两颗一起控
+uci set mt3600be-toggle.main.led_name='white:status'               # 只控白灯
+uci commit mt3600be-toggle
 uci set mt3600be-toggle.main.boot_off_leds=''                      # 不强制灭白灯
 uci commit mt3600be-toggle && /etc/init.d/mt3600be-toggle restart
 ```
