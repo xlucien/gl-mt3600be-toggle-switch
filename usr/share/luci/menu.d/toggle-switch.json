@@ -47,6 +47,14 @@
         },
         "leaf": true
     },
+    "admin/system/toggle/proxy_scan": {
+        "action": {
+            "type": "function",
+            "module": "luci.controller.toggle",
+            "function": "action_proxy_scan"
+        },
+        "leaf": true
+    },
     "admin/system/toggle/defaults": {
         "action": {
             "type": "function",

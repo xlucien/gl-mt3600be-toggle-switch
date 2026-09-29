@@ -21,8 +21,11 @@ config mt3600be_toggle 'main'
 	option led_high_action '1'
 	option led_low_action '0'
 
-	# Enabling this module snapshots each wifi-device disabled state once.
-	# Left/HIGH turns all radios off; Right/LOW restores that snapshot.
+	# Wi-Fi 档的作用范围（list wifi_targets）：
+	#   不写 / 空 = 总控：整机射频下电，恢复时按快照还原（旧行为）
+	#   写了段名 = 只停用这几个 wifi-iface（SSID），其他无线网络不受影响
+	# 段名来自 /etc/config/wireless，页面会列出当前所有 SSID 供勾选。
+	# Enabling this module snapshots each wifi-device / wifi-iface disabled state once.
 	option wifi_enabled '0'
 	option wifi_high_action '0'
 	option wifi_low_action '1'

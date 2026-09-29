@@ -5,15 +5,51 @@
 
 TAG='mt3600be-toggle'
 
+# 段名必须能在 uci 里直接引用：匿名段（@wifi-iface[0]）跳过，
+# 否则快照里会写进一个脚本没法稳定还原的名字。
+sec_safe() {
+	case "$1" in
+		''|*'@'*|*'['*|*']'*|*'='*|*[!A-Za-z0-9_]*) return 1;;
+	esac
+	return 0
+}
+
 snapshot_radio() {
 	local section="$1" disabled
+	sec_safe "$section" || return 0
 	config_get disabled "$section" disabled '0'
 	case "$disabled" in 1) disabled=1;; *) disabled=0;; esac
 	uci -q add_list "mt3600be-toggle.wifi_state.radio=${section}=${disabled}"
 }
 
+# Wi-Fi 档现在可以只关某几个网络（wifi-iface），所以快照也要覆盖 SSID 层。
+snapshot_iface() {
+	local section="$1" disabled
+	sec_safe "$section" || return 0
+	config_get disabled "$section" disabled '0'
+	case "$disabled" in 1) disabled=1;; *) disabled=0;; esac
+	uci -q add_list "mt3600be-toggle.wifi_state.iface=${section}=${disabled}"
+}
+
 disable_radio() {
 	uci -q set "wireless.${1}.disabled=1"
+}
+
+# 作用范围：空 = 总控（全部射频）；否则是 mt3600be-toggle.main.wifi_targets 里的段名。
+# 必须在 config_load wireless 之前取，否则会互相覆盖。
+wifi_target_list() {
+	config_load mt3600be-toggle
+	config_list_foreach main wifi_targets emit_target 2>/dev/null
+}
+
+emit_target() {
+	sec_safe "$1" || return 0
+	printf '%s\n' "$1"
+}
+
+wifi_reload() {
+	uci -q commit wireless
+	wifi reload >/dev/null 2>&1
 }
 
 # 校验每个 wifi-device 的 vif 是否真的处于 UP（与 mt3600be-reset-control 同源）。
@@ -59,6 +95,7 @@ HEAL_FLAG='/tmp/mt3600be-wifi-selfheal'
 wifi_apply_state() {
 	config_load mt3600be-toggle
 	config_list_foreach wifi_state radio restore_radio
+	config_list_foreach wifi_state iface restore_iface
 	uci -q commit wireless
 }
 
@@ -108,7 +145,23 @@ restore_radio() {
 	local entry="$1" section value
 	section="${entry%%=*}"
 	value="${entry#*=}"
-	case "$section" in ''|*[!A-Za-z0-9_]* ) return 0;; esac
+	sec_safe "$section" || return 0
+	case "$(uci -q get "wireless.${section}" 2>/dev/null)" in
+		wifi-device) ;;
+		*) return 0;;
+	esac
+	case "$value" in 0|1) uci -q set "wireless.${section}.disabled=${value}";; esac
+}
+
+restore_iface() {
+	local entry="$1" section value
+	section="${entry%%=*}"
+	value="${entry#*=}"
+	sec_safe "$section" || return 0
+	case "$(uci -q get "wireless.${section}" 2>/dev/null)" in
+		wifi-iface) ;;
+		*) return 0;;
+	esac
 	case "$value" in 0|1) uci -q set "wireless.${section}.disabled=${value}";; esac
 }
 
@@ -118,15 +171,30 @@ case "$1" in
 		uci -q set mt3600be-toggle.wifi_state='wifi_state'
 		config_load wireless
 		config_foreach snapshot_radio wifi-device
+		config_foreach snapshot_iface wifi-iface
 		uci -q commit mt3600be-toggle
-		logger -t "$TAG" 'saved current WiFi radio states'
+		logger -t "$TAG" 'saved current WiFi radio/SSID states'
 		;;
 	off)
-		config_load wireless
-		config_foreach disable_radio wifi-device
-		uci -q commit wireless
-		wifi reload >/dev/null 2>&1
-		logger -t "$TAG" 'WiFi disabled by switch'
+		TARGETS="$(wifi_target_list)"
+		if [ -z "$TARGETS" ]; then
+			# 总控：整机关无线（射频下电），与旧行为完全一致
+			config_load wireless
+			config_foreach disable_radio wifi-device
+			wifi_reload
+			logger -t "$TAG" 'WiFi disabled by switch (all radios)'
+		else
+			for sec in $TARGETS; do
+				case "$(uci -q get "wireless.${sec}" 2>/dev/null)" in
+					wifi-device|wifi-iface)
+						uci -q set "wireless.${sec}.disabled=1" ;;
+					*)
+						logger -t "$TAG" "WiFi target skipped (unknown section): $sec" ;;
+				esac
+			done
+			wifi_reload
+			logger -t "$TAG" "WiFi disabled by switch: $TARGETS"
+		fi
 		;;
 	restore)
 		config_load mt3600be-toggle
@@ -136,10 +204,11 @@ case "$1" in
 			exit 1
 		}
 		config_list_foreach wifi_state radio restore_radio
+		config_list_foreach wifi_state iface restore_iface
 		uci -q commit wireless
 		wifi reload >/dev/null 2>&1
 		wifi_heal
-		logger -t "$TAG" 'restored saved WiFi radio states'
+		logger -t "$TAG" 'restored saved WiFi radio/SSID states'
 		;;
 	*)
 		echo "Usage: $0 {snapshot|off|restore}" >&2

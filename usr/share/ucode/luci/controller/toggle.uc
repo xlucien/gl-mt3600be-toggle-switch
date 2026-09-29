@@ -6,6 +6,13 @@ import { cursor } from 'uci';
 const cur = cursor();
 const proxy_targets = { auto: true, passwall: true, passwall2: true, openclash: true, ssrplus: true, nikki: true, daed: true, homeproxy: true, mihomo: true };
 const reset_actions = { wifi: true, led: true, reboot: true };
+// 「检测」按钮用的关键词表：一次收集系统里所有名字，再拿这张表去匹配。
+// 故意不含裸 "proxy"（会命中一堆无关脚本）。
+const SCAN_WORDS = [
+    'passwall', 'openclash', 'clash', 'mihomo', 'ssrplus', 'shadowsocks', 'ss-libev',
+    'nikki', 'daed', 'homeproxy', 'xray', 'v2ray', 'singbox', 'sing-box',
+    'trojan', 'hysteria', 'naive', 'brook', 'gost', '3proxy', 'tuic', 'juicity'
+];
 
 function cfg_get(key, fallback) {
     let value = cur.get('mt3600be-toggle', 'main', key);
@@ -169,6 +176,75 @@ function proxy_search(keyword) {
     return length(items) > 40 ? slice(items, 0, 40) : items;
 }
 
+// ===== 预设代理「检测」按钮 =====
+// 页面默认只显示已经检测到的代理；用户点「检测」时跑这一遍，
+// 把系统里凡是名字像代理程序的（/etc/init.d、/etc/config、已安装包）都捞出来。
+// 三个来源各扫一次，再用 SCAN_WORDS 统一匹配 —— 不做「每个关键词跑一遍 shell」，
+// 那样二十多个关键词要几十秒。
+function dir_names(path) {
+    let out = [];
+    let dir = fs.opendir(path);
+    if (!dir) return out;
+    let entry;
+    while ((entry = dir.read()) != null) {
+        let name = (type(entry) == 'object') ? entry.name : entry;
+        if (name == null) continue;
+        name = `${name}`;
+        if (name == '' || name == '.' || name == '..') continue;
+        push(out, name);
+    }
+    dir.close();
+    return out;
+}
+
+function bucket_add(bucket, name, source) {
+    if (bucket[name] == null) bucket[name] = [];
+    for (let s in bucket[name]) if (s == source) return;
+    push(bucket[name], source);
+}
+
+function scan_item(name, bucket) {
+    let can = has_init_script(name);
+    return {
+        target: name,
+        label: name,
+        src: bucket[name],
+        has_init: can,
+        running: can ? service_running(name) : false,
+        known: (proxy_targets[name] == true) || is_custom(name)
+    };
+}
+
+function proxy_scan_all() {
+    let bucket = {};
+    let dirs = [ '/etc/init.d', '/etc/config' ];
+    for (let d in dirs) {
+        let src = (d == '/etc/init.d') ? 'initd' : 'config';
+        for (let name in dir_names(d)) bucket_add(bucket, name, src);
+    }
+    for (let line in shell_lines('( opkg list-installed 2>/dev/null; apk info 2>/dev/null )')) {
+        let m = match(line, /^([A-Za-z0-9][A-Za-z0-9._+-]*)/);
+        if (m) bucket_add(bucket, m[1], 'opkg');
+    }
+
+    let words = SCAN_WORDS;
+    let names = sort(keys(bucket) ?? []);
+    let usable = [], others = [];
+    for (let name in names) {
+        let low = lc(name);
+        let hit = false;
+        for (let w in words) if (index(low, w) >= 0) { hit = true; break; }
+        if (!hit) continue;
+        let it = scan_item(name, bucket);
+        if (it.has_init) push(usable, it);
+        else push(others, it);
+    }
+    let items = [];
+    for (let it in usable) push(items, it);
+    for (let it in others) push(items, it);
+    return length(items) > 30 ? slice(items, 0, 30) : items;
+}
+
 // 右栏「可控制」用：只保留实际检测到的插件（未安装的丢弃），这些条目可点击选择。
 function proxy_list_detected() {
     let all = proxy_list();
@@ -198,6 +274,97 @@ function led_list() {
 
 function physical_state() {
     return trim(fs.readfile('/tmp/mt3600be-toggle-state') ?? '') == '1' ? '1' : '0';
+}
+
+// ===== 无线网络清单 =====
+// 从 `uci show wireless` 现场解析出所有 wifi-device / wifi-iface。
+// 用 uci 命令行而不是再开一个 cursor()，是因为 ucode 的 uci 绑定没有稳定的
+// 枚举接口，而 uci show 的输出格式十几年没变过，最稳。
+//
+// 返回 { section: { section, type, ssid, device, band, disabled } }
+function wireless_sections() {
+    let map = {};
+    for (let line in split(command_output('uci -q show wireless 2>/dev/null'), '\n')) {
+        let s = trim(line);
+        if (s == '') continue;
+        let eq = index(s, '=');
+        if (eq < 0) continue;
+        let key = substr(s, 0, eq);
+        let val = trim(substr(s, eq + 1));
+        val = replace(val, /^'/, '');
+        val = replace(val, /'$/, '');
+        let m = match(key, /^wireless\.([^.]+)\.([A-Za-z0-9_-]+)$/);
+        if (m) {
+            let sec = m[1], opt = m[2];
+            if (type(map[sec]) != 'object')
+                map[sec] = { section: sec, type: '', ssid: '', device: '', band: '', disabled: '0' };
+            if (opt == 'ssid' || opt == 'device' || opt == 'band' || opt == 'disabled')
+                map[sec][opt] = val;
+            continue;
+        }
+        let m2 = match(key, /^wireless\.([^.]+)$/);
+        if (m2) {
+            let sec = m2[1];
+            if (type(map[sec]) != 'object')
+                map[sec] = { section: sec, type: '', ssid: '', device: '', band: '', disabled: '0' };
+            map[sec].type = val;
+        }
+    }
+    return map;
+}
+
+function band_label(band) {
+    if (band == '2g') return '2.4G';
+    if (band == '5g') return '5G';
+    if (band == '6g') return '6G';
+    if (band == '60g') return '60G';
+    return band == '' ? '无线' : band;
+}
+
+// 页面 Wi-Fi 档要显示的条目：每个 SSID 一条。
+// 频段取自己没有就问它所在的射频（mtwifi 的 band 写在 wifi-device 上）。
+function wireless_ifaces() {
+    let map = wireless_sections();
+    let names = sort(keys(map) ?? []);
+    let out = [];
+    for (let n in names) {
+        let e = map[n];
+        if (e.type != 'wifi-iface') continue;
+        // 匿名段（@wifi-iface[0]）没法在脚本里稳定引用，直接跳过
+        if (index(e.section, '@') >= 0) continue;
+        if (e.ssid == '') continue;
+        let band = e.band;
+        if (band == '' && e.device != '' && type(map[e.device]) == 'object')
+            band = map[e.device].band;
+        push(out, {
+            section: e.section,
+            ssid: e.ssid,
+            device: e.device,
+            band: band,
+            band_label: band_label(band),
+            disabled: (e.disabled == '1')
+        });
+    }
+    return out;
+}
+
+// Wi-Fi 档的作用范围：空 = 总控（全部射频）；否则是 wifi-iface 段名列表。
+function wifi_target_list() {
+    let value = cur.get('mt3600be-toggle', 'main', 'wifi_targets');
+    let out = [];
+    if (value == null) return out;
+    let items = (type(value) == 'array') ? value : split(`${value}`, /\s+/);
+    let map = wireless_sections();
+    for (let x in items) {
+        let s = trim(`${x}`);
+        if (s == '') continue;
+        if (!match(s, /^[A-Za-z0-9_]+$/)) continue;      /* 段名只认安全字符 */
+        let e = map[s];
+        if (type(e) != 'object') continue;               /* 系统里已经没有这个段了 */
+        if (e.type != 'wifi-iface' && e.type != 'wifi-device') continue;
+        push(out, s);
+    }
+    return out;
 }
 
 // ===== 灯光模式 =====
@@ -297,6 +464,8 @@ function full_data() {
         wifi_enabled: cfg_bool('wifi_enabled', '0'),
         wifi_left_action: cfg_bool('wifi_high_action', '0'),
         wifi_right_action: cfg_bool('wifi_low_action', '1'),
+        wifi_ifaces: wireless_ifaces(),
+        wifi_targets: wifi_target_list(),
         proxy_enabled: cfg_bool('proxy_enabled', '0'),
         proxy_target: cfg_get('proxy_target', 'auto'),
         proxy_left_action: cfg_bool('proxy_high_action', '0'),
@@ -342,6 +511,9 @@ function reset_defaults() {
     };
     for (let k, v in d)
         cur.set('mt3600be-toggle', 'main', k, v);
+    // 恢复默认时 Wi-Fi 回到「总控」：list 必须 delete，set 空数组无效
+    cur.delete('mt3600be-toggle', 'main', 'wifi_targets');
+    cur.delete('mt3600be-toggle', 'main', 'proxy_custom');
     cur.commit('mt3600be-toggle');
     system('/usr/sbin/mt3600be-reset-control clear >/dev/null 2>&1');
     // 默认无功能：把灯恢复成开机基线（boot_off_leds 里的熄灭、其余点亮）
@@ -392,6 +564,22 @@ function save(requested_action) {
 
     cur.set('mt3600be-toggle', 'main', 'global_enabled', new_global);
     cur.set('mt3600be-toggle', 'main', 'proxy_target', new_target);
+    // Wi-Fi 作用范围：空 = 总控（全部射频），否则是一串 wifi-iface 段名。
+    // 与 proxy_custom 一样：空列表必须 delete，set([]) 清不掉 UCI list。
+    let wifi_list = [];
+    let raw_wifi = http.formvalue('wifi_targets');
+    if (raw_wifi != null) {
+        let wsec = wireless_sections();
+        for (let w in split(trim(`${raw_wifi}`), /\s+/)) {
+            if (w == '' || !match(w, /^[A-Za-z0-9_]+$/)) continue;
+            let we = wsec[w];
+            if (type(we) != 'object') continue;
+            if (we.type != 'wifi-iface' && we.type != 'wifi-device') continue;
+            push(wifi_list, w);
+        }
+        if (length(wifi_list) == 0) cur.delete('mt3600be-toggle', 'main', 'wifi_targets');
+        else cur.set('mt3600be-toggle', 'main', 'wifi_targets', wifi_list);
+    }
     // 灯光模式 -> led_name。必须落盘，否则页面选的灯（比如白灯）保存后仍是旧值。
     let new_mode = valid_led_mode(http.formvalue('led_mode') ?? led_name_to_mode(cfg_get('led_name', 'blue:status')));
     cur.set('mt3600be-toggle', 'main', 'led_name', led_names_to_mode_string(new_mode));
@@ -446,6 +634,10 @@ return {
         let kw = trim(`${http.formvalue('kw') ?? ''}`);
         if (kw == '') return json_out({ success: false, error: '请输入关键词' }, 400);
         return json_out({ success: true, keyword: kw, items: proxy_search(kw) });
+    },
+    action_proxy_scan: function() {
+        let items = proxy_scan_all();
+        return json_out({ success: true, items: items, count: length(items) });
     },
     action_simulate: function() {
         return simulate();

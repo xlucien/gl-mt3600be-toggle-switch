@@ -132,20 +132,27 @@
     @media (max-width:900px){ #gl .demo-side { width:100%; border-left:0; border-top:1px dashed var(--line);
                                               padding:14px 0 0; } }
 
-    /* ===== 功能：左右两栏（高度固定，切换功能时不跳动） ===== */
+    /* ===== 功能：左右两栏（等高等宽，内容自己撑开 —— 不用滚动条）=====
+       原来两栏钉死 328px、内部 overflow-y:auto，结果右栏卡片一多就得
+       在里面上下滑才能看全（LED 档、查找代理都被挡过）。
+       改成 min-height + 内容自然撑开：两栏靠 align-items:stretch 仍然等高，
+       卡片本身依旧是 88px 定高，所以视觉上还是齐的，只是再也不用滑了。 */
     #gl .fxrow { display:flex; gap:14px; align-items:stretch; flex-wrap:wrap; }
-    #gl .fxcol { flex:1 1 320px; min-width:290px; height:328px; display:flex; flex-direction:column;
+    #gl .fxcol { flex:1 1 320px; min-width:290px; min-height:328px; display:flex; flex-direction:column;
                  background:#fafbfc; border:1px solid var(--line); border-radius:var(--r-box); padding:0 14px 12px; }
     #gl .fxcap { font-size:12px; font-weight:700; color:var(--muted); letter-spacing:.4px;
                  padding:12px 0 8px; flex:none; }
-    #gl .fxscroll { flex:1 1 auto; overflow-y:auto; overflow-x:hidden; padding-right:4px; }
-    #gl .fxscroll::-webkit-scrollbar { width:6px; }
-    #gl .fxscroll::-webkit-scrollbar-thumb { background:#dfe3ea; border-radius:3px; }
+    #gl .fxscroll { flex:1 1 auto; padding-right:4px; }
     #gl .fxlist { display:flex; flex-direction:column; gap:14px; }
     #gl .fxh { font-size:13.5px; font-weight:600; margin-bottom:7px; }
     #gl .fxctrls { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
     #gl .fxnote { font-size:12.5px; color:var(--muted); line-height:1.7; margin-top:8px; }
     #gl .fxnote b { color:var(--text); font-weight:700; }
+    /* 「检测」按钮那一行：按钮 + 一句说明，跟着分段控件下面 */
+    #gl .fxscan { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:9px; }
+    #gl .fxscan .btn.ghost { border:1px solid var(--line) !important; background:#fff; padding:6px 14px;
+                             font-size:12.5px; color:#6b7688; }
+    #gl .fxscan .btn.ghost:hover { color:var(--text); background:#f4f6fa; }
 
     /* 右栏条目：统一一张轻卡片，不用彩色左边框，避免花。
 
@@ -279,6 +286,7 @@
      data-save-url='{{ dispatcher.build_url("admin", "system", "toggle", "save") }}'
      data-apply-url='{{ dispatcher.build_url("admin", "system", "toggle", "apply") }}'
      data-search-url='{{ dispatcher.build_url("admin", "system", "toggle", "proxy_search") }}'
+     data-scan-url='{{ dispatcher.build_url("admin", "system", "toggle", "proxy_scan") }}'
      data-defaults-url='{{ dispatcher.build_url("admin", "system", "toggle", "defaults") }}'>
 <div class="wrap">
 
@@ -370,6 +378,13 @@
                         <div id="proxyItem">
                             <div class="fxh">代理程序</div>
                             <div class="fxctrls"><div class="seg" id="proxySeg"></div></div>
+                            <!-- 默认只显示系统里检测到的；想找预设里别的插件就点「检测」，
+                                 扫到什么补什么，不再一次性铺一整排灰色按钮。 -->
+                            <div class="fxscan">
+                                <button type="button" class="btn ghost" id="btnProxyScan" onclick="doProxyScan()">检测</button>
+                                <span class="fxnote" style="margin-top:0">只显示检测到的；点检测去扫描其他代理</span>
+                            </div>
+                            <div class="fxfind-list" id="scanList"></div>
                         </div>
 
                         <div id="actItem">
@@ -455,4 +470,4 @@
 
 {% include('footer') %}
 
-<script src="/luci-static/resources/mt3600be-toggle/toggle.js?v=20260930d"></script>
+<script src="/luci-static/resources/mt3600be-toggle/toggle.js?v=20260930e"></script>

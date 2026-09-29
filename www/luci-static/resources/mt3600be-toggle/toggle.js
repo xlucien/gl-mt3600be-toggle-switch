@@ -6,6 +6,7 @@
         switch_position: 'left', blue_led: 'on', white_led: 'off',
         led_enabled: false, led_left_action: true, led_right_action: false, led_name: 'blue:status',
         wifi_enabled: false, wifi_left_action: false, wifi_right_action: true,
+        wifi_targets: [], wifi_ifaces: [],
         proxy_enabled: false, proxy_target: 'auto', proxy_left_action: false, proxy_right_action: true,
         reset_single_enabled: false, reset_single_action: 'wifi',
         reset_double_enabled: false, reset_double_action: 'wifi',
@@ -41,7 +42,9 @@
     var SAVED = clone(INIT);
     var SAVED_CUSTOM = [];
     var firstLoad = true;
-    var dataUrl = '', saveUrl = '', applyUrl = '', defaultsUrl = '', searchUrl = '';
+    var dataUrl = '', saveUrl = '', applyUrl = '', defaultsUrl = '', searchUrl = '', scanUrl = '';
+    /* 「检测」扫出来、但后端还没算作「已检测到」的代理，会话内保留（整条结果） */
+    var SCANNED = [];
     /* 用户自己搜出来并选中的自定义代理（预设 8 个之外），保存时整份回传给后端 */
     var CUSTOM = [];
 
@@ -160,14 +163,29 @@
             ? CFG.proxies_detected.slice()
             : ((CFG.proxies && CFG.proxies.length) ? CFG.proxies.slice() : INIT.proxies.slice());
         /* 自定义目标始终保留在列表里：用户既然选过，就不该因为一次探测失败而消失 */
-        var i, j, found;
+        var i, j, k, found;
         for (i = 0; i < CUSTOM.length; i++) {
             found = false;
             for (j = 0; j < list.length; j++) if (list[j].target === CUSTOM[i]) found = true;
             if (!found)
                 list.push({ target: CUSTOM[i], state: 'not_installed', configured: false, running: false });
         }
+        /* 检测出来的：后端还没认，但用户刚扫到，也给它露个脸 */
+        for (k = 0; k < SCANNED.length; k++) {
+            found = false;
+            for (j = 0; j < list.length; j++) if (list[j].target === SCANNED[k].target) found = true;
+            if (!found) list.push(scanToProxy(SCANNED[k]));
+        }
         return list;
+    }
+    /* 检测结果 -> 与后端同构的代理条目，左右两栏共用一套渲染 */
+    function scanToProxy(it) {
+        return {
+            target: it.target,
+            state: it.has_init ? (it.running ? 'running' : 'installed') : 'not_installed',
+            configured: false,
+            running: !!it.running
+        };
     }
     /* 自定义代理（搜索结果里选中的、预设之外的程序） */
     function isCustom(t) {
@@ -246,24 +264,29 @@
     }
 
     /* 左栏代理程序：和「左拨动作」一样用分段按钮，点一下即选。
-       【候选要列全】预设 8 个 + auto + 用户自定义过的，装没装都列出来 ——
-       用户要求「左边下拉的可以选择的很多，都列出来」，只列检测到的
-       会让这台只装了 daed 的机器看起来几乎没有可选项。
-       未安装的灰显且不可点（选了也控制不了），状态文字统一放右栏，这里只给名字。 */
+
+       【默认只显示检测到的】预设插件那一整排不再无条件铺出来 ——
+       这台机器只装了 daed，铺 9 个按钮里 8 个是灰的，看着像"坏了"。
+       装了什么就显示什么；想找预设里别的，点下面的「检测」去扫，
+       扫到哪个就补进来哪个。扫到的和自定义的都进 proxyDetected()。
+       状态文字统一放右栏，这里只给名字。 */
     function renderProxySeg() {
         var seg = $('proxySeg');
         if (!seg) return;
-        var list = proxyList(), html = '', i, p;
+        var list = proxyDetected(), html = '', i, p;
         for (i = 0; i < list.length; i++) {
             p = list[i];
             var nm = PROXY_NAME[p.target] || p.target;
-            var dead = (p.state === 'not_installed');
+            var dead = (p.state === 'not_installed' && p.target !== 'auto');
             html += '<button type="button" data-v="' + esc(p.target) + '"'
                 + (dead ? ' class="dim" disabled title="未安装"'
                         : ' onclick="pickProxy(\'' + esc(p.target) + '\')"')
                 + '>' + esc(nm) + '</button>';
         }
         seg.innerHTML = html;
+        /* 列数跟着条目数走：只有 2 个就两等分铺满，不留空第三格 */
+        seg.style.gridTemplateColumns = 'repeat('
+            + (list.length < 3 ? (list.length || 1) : 3) + ', minmax(0, 1fr))';
         setSegActive('proxySeg', CFG.proxy_target);
     }
 
@@ -288,17 +311,12 @@
         }
 
         if (f === 'wifi') {
-            box.innerHTML =
-                '<div class="cap">' +
-                '<div class="cap-h"><span class="cap-n">无线网络</span><span class="pill idle">2.4G + 5G</span></div>' +
-                '<div class="cap-d"><span class="dt">左拨：<b>' + esc(actText(f, leftAction(f))) + '</b>' +
-                '　右拨：<b>' + esc(actText(f, !leftAction(f))) + '</b>' +
-                '<br>关闭时保存各射频快照，重开按快照恢复。</span></div></div>';
+            renderWifiCap(box, f);
             return;
         }
 
         if (f === 'led') {
-            var cur = curLedMode(), i, m, names = modeNames(cur).join(' + ');
+            var cur = curLedMode(), i, m;
             for (i = 0; i < LED_MODES.length; i++) {
                 m = LED_MODES[i];
                 var sel = (m.v === cur);
@@ -308,11 +326,6 @@
                     '</div>' +
                     '<div class="cap-d"><span class="dt">' + esc(m.d) + '</span></div></div>';
             }
-            html += '<div class="cap">' +
-                '<div class="cap-h"><span class="cap-n">受控灯</span>' +
-                '<span class="pill idle">' + esc(names || '—') + '</span></div>' +
-                '<div class="cap-d"><span class="dt">左拨：<b>' + esc(actText(f, leftAction(f))) + '</b>' +
-                '　右拨：<b>' + esc(actText(f, !leftAction(f))) + '</b></span></div></div>';
             box.innerHTML = html;
             wireLedModePicks();
             return;
@@ -352,6 +365,82 @@
         }
         box.innerHTML = html;
         wireProxyPicks();
+    }
+
+    /* ===== Wi-Fi 档：总控 or 具体网络名（可单选可多选）=====
+       wifi_targets 为空 = 总控（整机射频下电，与之前行为一致）；
+       否则只停用选中的那几个 SSID，其他网络照常工作。
+       后端会按段名判断是 wifi-device 还是 wifi-iface。 */
+    function wifiIfaces() {
+        return (CFG.wifi_ifaces && CFG.wifi_ifaces.length) ? CFG.wifi_ifaces : [];
+    }
+    function wifiTargets() {
+        return (CFG.wifi_targets && CFG.wifi_targets.length) ? CFG.wifi_targets : [];
+    }
+    function wifiIsAll() { return wifiTargets().length === 0; }
+    function wifiRangeText() {
+        var tgt = wifiTargets();
+        if (!tgt.length) return '全部无线';
+        var ifaces = wifiIfaces(), out = [], i, j, nm;
+        for (i = 0; i < tgt.length; i++) {
+            nm = tgt[i];
+            for (j = 0; j < ifaces.length; j++) if (ifaces[j].section === tgt[i]) nm = ifaces[j].ssid;
+            out.push(nm);
+        }
+        return out.join('、');
+    }
+    function renderWifiCap(box, f) {
+        var ifaces = wifiIfaces(), tgt = wifiTargets(), html = '', i, it;
+        var all = wifiIsAll();
+        html += '<div class="cap pick' + (all ? ' sel' : '') + '" data-wifi="">' +
+            '<div class="cap-h"><span class="cap-n">全部无线</span>' +
+            '<span class="pill idle">总控</span>' +
+            (all ? '<span class="pill run">当前所选</span>' : '') + '</div>' +
+            '<div class="cap-d"><span class="dt">整机关闭全部射频。关闭前保存快照，'
+            + '重开按快照恢复。</span></div></div>';
+        if (!ifaces.length) {
+            html += '<div class="cap">' +
+                '<div class="cap-h"><span class="cap-n">无线网络</span>' +
+                '<span class="pill idle">未检测到</span></div>' +
+                '<div class="cap-d"><span class="dt">没有读到任何 SSID，只能用上面的「全部无线」。</span>'
+                + '</div></div>';
+        }
+        for (i = 0; i < ifaces.length; i++) {
+            it = ifaces[i];
+            var sel = !all && tgt.indexOf(it.section) >= 0;
+            html += '<div class="cap pick' + (sel ? ' sel' : '') + '" data-wifi="' + esc(it.section) + '">' +
+                '<div class="cap-h"><span class="cap-n">' + esc(it.ssid) + '</span>' +
+                '<span class="pill idle">' + esc(it.band_label || '无线') + '</span>' +
+                (sel ? '<span class="pill run">已选</span>' : '') + '</div>' +
+                '<div class="cap-d"><span class="dt">只停用这个网络，其他无线网络不受影响。'
+                + '当前：<b>' + (it.disabled ? '已停用' : '正常') + '</b></span></div></div>';
+        }
+        box.innerHTML = html;
+        wireWifiPicks();
+    }
+    function wireWifiPicks() {
+        var cards = document.querySelectorAll('#capBox .cap[data-wifi]'), i;
+        for (i = 0; i < cards.length; i++)
+            cards[i].onclick = function () { pickWifi(this.getAttribute('data-wifi')); };
+    }
+    function pickWifi(sec) {
+        var tgt = wifiTargets().slice(), at;
+        if (sec === '') {
+            CFG.wifi_targets = [];               /* 新数组：不能原地改，否则 SAVED 会跟着变 */
+            applyUI(); markDirty();
+            toast('作用范围：全部无线（总控）');
+            return;
+        }
+        at = tgt.indexOf(sec);
+        if (at >= 0) {
+            if (tgt.length === 1) { toast('至少选一个网络；要总控请点「全部无线」'); return; }
+            tgt.splice(at, 1);
+        } else {
+            tgt.push(sec);
+        }
+        CFG.wifi_targets = tgt;
+        applyUI(); markDirty();
+        toast('作用范围：' + wifiRangeText());
     }
 
     function wireProxyPicks() {
@@ -453,6 +542,7 @@
     var VOLATILE = {
         switch_position: 1, blue_led: 1, white_led: 1,
         proxies: 1, proxies_detected: 1, leds: 1, proxies_custom: 1,
+        wifi_ifaces: 1,
         reset_status: 1, proxy_status: 1
     };
     function isDirty() {
@@ -507,6 +597,8 @@
         });
         /* 自定义代理整份回传，后端按这份覆盖 UCI list proxy_custom */
         fd.append('proxy_custom', CUSTOM.join(' '));
+        /* Wi-Fi 作用范围：空 = 总控（全部射频） */
+        fd.append('wifi_targets', wifiTargets().join(' '));
         return fd;
     }
 
@@ -582,6 +674,64 @@
         toast('已选择：' + name + '　（记得保存）');
     }
 
+    /* ===== 预设代理「检测」=====
+       默认只显示系统里已经检测到的代理；点这个按钮让后端把名字像代理的
+       程序全扫一遍（/etc/init.d、/etc/config、已安装包），扫到就补进列表。 */
+    function doProxyScan() {
+        var btn = $('btnProxyScan');
+        if (btn) { btn.disabled = true; btn.textContent = '检测中'; }
+        fetch(scanUrl, { method: 'POST', credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+                if (btn) { btn.disabled = false; btn.textContent = '检测'; }
+                if (!j || !j.success) {
+                    toast('检测失败：' + ((j && j.error) ? j.error : '未知错误'));
+                    return;
+                }
+                renderScan(j.items || []);
+            })
+            .catch(function () {
+                if (btn) { btn.disabled = false; btn.textContent = '检测'; }
+                toast('检测请求失败');
+            });
+    }
+    function renderScan(items) {
+        var box = $('scanList'), html = '', i, it, already;
+        var shown = proxyDetected(), known = {};
+        for (i = 0; i < shown.length; i++) known[shown[i].target] = true;
+        if (!items.length) {
+            box.innerHTML = '<div class="hint">系统里没有找到名字像代理的程序。</div>';
+            toast('没有检测到其他代理程序');
+            return;
+        }
+        var fresh = 0;
+        for (i = 0; i < items.length; i++) {
+            it = items[i];
+            already = !!known[it.target];
+            /* 只有「有启停脚本」的才补进选择列表：没有启停脚本的程序
+               滑块根本控不了，铺一排灰按钮只是噪音；它们仍然出现在
+               下面的检测结果里，让用户自己看见、自己判断。
+               同理不自动写进 proxy_custom —— 写不写由用户点「选择」决定。 */
+            if (!already && it.has_init) {
+                fresh++;
+                SCANNED.push(it);
+                known[it.target] = true;
+            }
+            var sel = (CFG.proxy_target === it.target);
+            html += '<div class="frow' + (it.has_init ? ' click' : '') + (sel ? ' sel' : '') + '"'
+                + (it.has_init ? ' onclick="pickProxyFind(\'' + esc(it.target) + '\')"' : '') + '>'
+                + '<span class="fn">' + esc(it.label) + '</span>'
+                + '<span class="fsrc">' + esc(srcText(it.src)) + '</span>'
+                + (it.has_init
+                    ? '<span class="fbtn">' + (sel ? '已选择' : '选择') + '</span>'
+                    : '<span class="fbtn grey">无启停脚本</span>')
+                + '</div>';
+        }
+        box.innerHTML = html;
+        applyUI();
+        toast(fresh ? ('检测到 ' + fresh + ' 个新代理，已加入列表') : '检测完成，没有新发现');
+    }
+
     function mergeAll(d) {
         for (var k in d) if (d[k] !== undefined && d[k] !== null) CFG[k] = d[k];
         syncDerived(CFG);
@@ -597,6 +747,7 @@
         if (d.proxies) CFG.proxies = d.proxies;
         if (d.proxies_detected) CFG.proxies_detected = d.proxies_detected;
         if (d.leds) CFG.leds = d.leds;
+        if (d.wifi_ifaces) CFG.wifi_ifaces = d.wifi_ifaces;
         if (d.proxies_custom) CUSTOM = d.proxies_custom.slice();
         if (isDirty()) return;
         CFG.led_enabled = d.led_enabled;
@@ -608,6 +759,7 @@
         CFG.proxy_target = d.proxy_target;
         CFG.led_name = d.led_name;
         CFG.led_mode = d.led_mode;
+        if (d.wifi_targets) CFG.wifi_targets = d.wifi_targets.slice();
         RESET_GESTURES.forEach(function (g) {
             CFG['reset_' + g + '_enabled'] = d['reset_' + g + '_enabled'];
             CFG['reset_' + g + '_action'] = d['reset_' + g + '_action'];
@@ -653,6 +805,7 @@
         saveUrl = root.getAttribute('data-save-url');
         applyUrl = root.getAttribute('data-apply-url');
         searchUrl = root.getAttribute('data-search-url');
+        scanUrl = root.getAttribute('data-scan-url');
         defaultsUrl = root.getAttribute('data-defaults-url');
 
         document.addEventListener('click', function (e) {
@@ -669,6 +822,7 @@
         window.doApply = doApply;
         window.doDefaults = doDefaults;
         window.doProxySearch = doProxySearch;
+        window.doProxyScan = doProxyScan;
         window.pickProxyFind = pickProxyFind;
         window.dropCustom = dropCustom;
 
