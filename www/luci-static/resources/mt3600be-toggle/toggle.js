@@ -286,8 +286,9 @@
             box.innerHTML =
                 '<div class="cap">' +
                 '<div class="cap-h"><span class="cap-n">无线网络</span><span class="pill idle">2.4G + 5G</span></div>' +
-                '<div class="cap-d">左拨：' + esc(actText(f, leftAction(f))) + '　·　右拨：' + esc(actText(f, !leftAction(f))) +
-                '<br>关闭时会保存当前各射频的启停状态，重新打开时按快照恢复（含失败自愈重试）。</div></div>';
+                '<div class="cap-d"><span class="dt">左拨：<b>' + esc(actText(f, leftAction(f))) + '</b>' +
+                '　右拨：<b>' + esc(actText(f, !leftAction(f))) + '</b>' +
+                '<br>关闭时保存各射频快照，重开按快照恢复。</span></div></div>';
             return;
         }
 
@@ -300,13 +301,13 @@
                     '<div class="cap-h"><span class="cap-n">' + esc(m.t) + '</span>' +
                     (sel ? '<span class="pill run">当前所选</span>' : '') +
                     '</div>' +
-                    '<div class="cap-d">' + esc(m.d) + '</div></div>';
+                    '<div class="cap-d"><span class="dt">' + esc(m.d) + '</span></div></div>';
             }
             html += '<div class="cap">' +
                 '<div class="cap-h"><span class="cap-n">受控灯</span>' +
                 '<span class="pill idle">' + esc(names || '—') + '</span></div>' +
-                '<div class="cap-d">左拨：<b>' + esc(actText(f, leftAction(f))) + '</b>' +
-                '　右拨：<b>' + esc(actText(f, !leftAction(f))) + '</b></div></div>';
+                '<div class="cap-d"><span class="dt">左拨：<b>' + esc(actText(f, leftAction(f))) + '</b>' +
+                '　右拨：<b>' + esc(actText(f, !leftAction(f))) + '</b></span></div></div>';
             box.innerHTML = html;
             wireLedModePicks();
             return;
@@ -335,12 +336,13 @@
                 '<div class="cap-h"><span class="cap-n">' + esc(nm) + '</span>' +
                 '<span class="pill ' + st.c + '">' + st.t + '</span>' +
                 (sel ? '<span class="pill run">当前所选</span>' : '') +
+                '</div>' +
+                '<div class="cap-d"><span class="dt">' + esc(ctrl) + '</span>' +
                 (isCustom(p.target)
-                    ? '<span class="cap-x" onclick="event.stopPropagation();dropCustom(\''
+                    ? '<span class="cap-x" title="移除这个自定义代理" onclick="event.stopPropagation();dropCustom(\''
                         + esc(p.target) + '\')">移除</span>'
                     : '') +
-                '</div>' +
-                '<div class="cap-d">' + esc(ctrl) + '</div></div>';
+                '</div></div>';
         }
         box.innerHTML = html;
         wireProxyPicks();
