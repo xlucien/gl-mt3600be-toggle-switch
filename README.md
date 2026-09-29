@@ -7,7 +7,7 @@
 
 页面采用 GL.iNet 原厂风格重写（ucode 模板）：
 
-![拨动开关设置页](docs/luci-toggle-gl.png)
+![按键控制页](docs/luci-toggle-gl.png)
 
 旧版（自绘 JS 视图 `view/toggle/index.js`）截图：
 
@@ -78,7 +78,7 @@ released) exec /usr/sbin/mt3600be-toggle-apply low  ;;
 | `/usr/libexec/x1pro-delay` | `/usr/libexec/mt3600be-delay` |
 | `/etc/rc.button/reset.x1pro-stock` | `/etc/rc.button/reset.mt3600be-stock` |
 
-LuCI 侧沿用 `luci.controller.toggle` / 菜单 `admin/system/toggle`（标题「拨动开关设置」）。
+LuCI 侧沿用 `luci.controller.toggle` / 菜单 `admin/system/toggle`（标题「按键控制」）。
 视图已由 `www/luci-static/resources/view/toggle/{index.js,index.css}` 改为
 **ucode 模板** `usr/share/ucode/luci/template/toggle.ut`（GL 原厂风格，服务端渲染，无前端构建依赖）。
 
@@ -93,18 +93,25 @@ LuCI 侧沿用 `luci.controller.toggle` / 菜单 `admin/system/toggle`（标题�
 
 ### 页面交互约定
 
-- **保存栏置顶**，有改动才可点「保存」。
+页面结构自上而下：**开关演示 → 保存栏 → 拨动开关功能 → RESET 重置键**。
+
+- **保存栏是「开关演示」下面的独立一栏**，有改动才可点「保存」。
 - **开关演示是纯状态展示**：不可点击、不做模拟。位置与灯态每 3 秒轮询刷新，
   位置直接取自 `mode` 引脚的 GPIO 电平等（`physical_gpio()`），不受任何缓存影响。
-- **「拨动开关功能」左栏放选项、右栏放「可控制」能力卡片**：
-  - 左栏：功能下拉（无功能 / 代理 / Wi-Fi / LED）→ 选「代理」时其下方出现
-    「代理程序」下拉（只列出检测到的插件）。
-  - 右栏：随所选功能实时列出能控制什么。代理会把全部 9 个目标
-    （自动 + 8 个插件）都列出来，各带状态标签（运行中 / 未启用 / 未安装 /
-    检测到多个）和可控性说明；LED 列出受控灯名并支持点选多灯；
-    Wi-Fi 说明控制的是 2.4G + 5G 及其快照恢复行为。
+- **「拨动开关功能」两栏等高定长**（`height:328px`，内容超出时栏内滚动），
+  切换功能时页面高度不跳动。
+  - 左栏「功能选项」：功能下拉（无功能 / 代理 / Wi-Fi / LED）→ 选「代理」时其下方出现
+    「代理程序」下拉 → 「左拨动作」分段按钮 + 一行文字说明左右拨各自的动作。
+  - 右栏「可控制」：随所选功能实时列出能控制什么。
+    - 代理：**只列检测到的插件**（`not_installed` 由控制器直接过滤掉），
+      各带状态标签（运行中 / 未启用 / 异常 / 检测到多个）与可控性说明。
+    - LED：**受控灯胶囊在右栏**，蓝灯 / 白灯都可点击多选，点击即写入 `led_name`。
+    - Wi-Fi：说明控制的是 2.4G + 5G 及其快照恢复行为。
+- **代理默认选中正在运行的那个**：首次进入时若 `proxy_target` 为空或已不在检测列表中，
+  自动选中 `state == running` 的插件；若都不在运行则退回「自动」。
+  用户在页面上的选择不会被轮询覆盖。
 - **只暴露「左拨动作」**，右拨动作 = 左拨取反（保存时自动写入 `*_low_action`），
-  页面上「右拨动作」是只读派生值。
+  不再单独占一栏，改为左拨动作下方的一行文字说明。
 - **RESET 三个手势都带「禁用」**：`reset_*_enabled=0` + `reset_*_action`，
   选「禁用」即该手势不执行任何动作（长按 5 秒的恢复出厂设置不受影响）。
 
@@ -279,7 +286,7 @@ grep '|mode' /sys/kernel/debug/gpio
 - 开机同步：`mt3600be-toggle: MODE=0 (low)` → 页面显示「右侧」
 - 模拟 `ACTION=pressed`（左/高）→ `MODE=1 (high)` → `white:status` 亮度 1（灯亮）
 - 模拟 `ACTION=released`（右/低）→ `MODE=0 (low)` → 亮度 0（灯灭）
-- LuCI `系统 → 拨动开关设置` 正常渲染，`/admin/system/toggle/data` 返回完整 JSON
+- LuCI `系统 → 按键控制` 正常渲染，`/admin/system/toggle/data` 返回完整 JSON
 - RESET 单击关 WiFi → 两个 radio 均 down；再单击开 WiFi → `ra0` / `rai0` 均 UP
 
 ## 卸载
