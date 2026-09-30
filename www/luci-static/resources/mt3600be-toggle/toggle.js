@@ -284,9 +284,10 @@
                 + '>' + esc(nm) + '</button>';
         }
         seg.innerHTML = html;
-        /* 列数跟着条目数走：只有 2 个就两等分铺满，不留空第三格 */
+        /* 列数跟着条目数走：只有 2 个就两列、1 个就单列，但单格宽度统一
+           min-width:96px（见 .ut），所以按钮不会因选项少而被拉伸得過宽 */
         seg.style.gridTemplateColumns = 'repeat('
-            + (list.length < 3 ? (list.length || 1) : 3) + ', minmax(0, 1fr))';
+            + (list.length < 3 ? (list.length || 1) : 3) + ', minmax(96px, 1fr))';
         setSegActive('proxySeg', CFG.proxy_target);
     }
 
