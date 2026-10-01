@@ -141,6 +141,75 @@ wifi_heal() {
 	return 1
 }
 
+# 关闭方向的收敛检查（与上面的 wifi_heal 对称）：
+# mtwifi 的 wifi reload 在置 disabled=1 后偶尔不能立即使 radio/接口下电，
+# restore 有 wifi_heal 兜底，但 off 原来没有任何验证——于是"关闭偶尔不生效"
+# 且毫无日志。下面两个函数分别确认「全部已下电」和「指定段已下电」，
+# off 据此重试 wifi reload，直到确认下电或到达上限。
+
+# 所有无线接口都已下电 -> 返回 0
+wifi_all_down() {
+	local json
+	json="$(ubus call network.wireless status 2>/dev/null)"
+	[ -n "$json" ] || return 0      # 取不到状态就不阻塞，避免无谓重试
+	json_cleanup; json_load "$json" || return 0
+	json_get_keys _r || return 0
+	local _r _ik _i _up _any=0
+	for _r in $_r; do
+		json_select "$_r" || continue
+		if json_select interfaces; then
+			json_get_keys _ik
+			for _i in $_ik; do
+				json_select "$_i" || continue
+				json_get_var _up up
+				json_select ..
+				[ "$_up" = 1 ] && _any=1
+			done
+			json_select ..
+		fi
+		json_select ..
+	done
+	[ "$_any" = 0 ]
+}
+
+# 指定段（device/iface）对应的接口都已下电 -> 返回 0
+wifi_target_down() {
+	local json
+	json="$(ubus call network.wireless status 2>/dev/null)"
+	[ -n "$json" ] || return 0
+	json_cleanup; json_load "$json" || return 0
+	json_get_keys _r || return 0
+	local _r _ik _i _sec _up _bad=0 _hit=0
+	for _r in $_r; do
+		json_select "$_r" || continue
+		if json_select interfaces; then
+			json_get_keys _ik
+			for _i in $_ik; do
+				json_select "$_i" || continue
+				json_get_var _sec section
+				json_get_var _up up
+				json_select ..
+				case " $* " in *" $_sec "*) _hit=1; [ "$_up" = 1 ] && _bad=1;; esac
+			done
+			json_select ..
+		fi
+		json_select ..
+	done
+	[ "$_hit" = 1 ] && [ "$_bad" = 0 ]
+}
+
+# 关闭后收敛：checker 返回非 0（未下电）就 sleep 后重试 wifi reload，最多 5 次。
+wifi_off_retry() {
+	local checker="$1" tries=0
+	while ! eval "$checker"; do
+		tries=$((tries + 1))
+		[ "$tries" -ge 5 ] && { logger -t "$TAG" "WiFi off not settled after $tries retries"; break; }
+		logger -t "$TAG" "WiFi off incomplete, retry $tries (wifi reload)"
+		sleep 3
+		wifi_reload
+	done
+}
+
 restore_radio() {
 	local entry="$1" section value
 	section="${entry%%=*}"
@@ -182,6 +251,7 @@ case "$1" in
 			config_load wireless
 			config_foreach disable_radio wifi-device
 			wifi_reload
+			wifi_off_retry wifi_all_down
 			logger -t "$TAG" 'WiFi disabled by switch (all radios)'
 		else
 			for sec in $TARGETS; do
@@ -193,6 +263,7 @@ case "$1" in
 				esac
 			done
 			wifi_reload
+			wifi_off_retry "wifi_target_down $TARGETS"
 			logger -t "$TAG" "WiFi disabled by switch: $TARGETS"
 		fi
 		;;

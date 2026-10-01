@@ -148,11 +148,6 @@
     #gl .fxctrls { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
     #gl .fxnote { font-size:12.5px; color:var(--muted); line-height:1.7; margin-top:8px; }
     #gl .fxnote b { color:var(--text); font-weight:700; }
-    /* 「检测」按钮那一行：按钮 + 一句说明，跟着分段控件下面 */
-    #gl .fxscan { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:9px; }
-    #gl .fxscan .btn.ghost { border:1px solid var(--line) !important; background:#fff; padding:6px 14px;
-                             font-size:12.5px; color:#6b7688; }
-    #gl .fxscan .btn.ghost:hover { color:var(--text); background:#f4f6fa; }
 
     /* 右栏条目：统一一张轻卡片，不用彩色左边框，避免花。
 
@@ -188,10 +183,6 @@
     #gl .cap-x { flex:none; font-size:11.5px; font-weight:600; color:var(--muted);
                  padding:2px 9px; border-radius:var(--r-ctl); background:#f4f6fa; transition:all .15s; }
     #gl .cap-x:hover { background:#fdecec; color:var(--hot); }
-    /* 分段按钮：所有分段控件（代理 / 左拨动作 / RESET）的按键统一最小宽度，
-       不再随选项名称长短或选项数量忽大忽小，整页按键尺寸协调一致 */
-    #gl .seg button { min-width:96px; }
-
     /* 自定义代理搜索：输入框 + 检测按钮 + 结果行。
        输入框沿用「槽内控件」语言（灰底、--r-ctl），与分段控件同源。 */
     #gl .fxfind { display:flex; gap:8px; margin-top:10px; }
@@ -235,33 +226,20 @@
     #gl .opt.dim { color:#aab2c0; }
     #gl .opt.dim.cur { color:var(--brand); }
 
-    /* 分段控件：浅灰凹槽，选中项 = 白色浮起小块（不加黑环）
-
-       【宽度必须锁死，不能靠内容撑】原来按钮宽度是 padding 撑出来的，
-       选中项切成白底 + 投影后，度量差异会让选中块看着比未选中窄一圈，
-       用户反馈「一点就缩小、取消又变大」。
-       解决：整排改用 grid 等分容器宽度，每格 width:100%，
-       选中/未选中尺寸完全一致，切换时不再跳。 */
-    #gl .seg { display:grid; background:#f2f4f8; border-radius:var(--r-box); padding:3px;
-               gap:2px; }
-    #gl .seg button { border:0; background:transparent; padding:7px 10px; border-radius:var(--r-ctl);
-                      font-size:13px; font-weight:600; color:#7c8698; cursor:pointer;
+    /* 分段控件：浅灰凹槽，选中项 = 白色浮起小块（不加黑环）。
+       按钮固定宽度（关掉自动缩放）：选项多少、标签长短都不再改变单键尺寸，
+       整页按键视觉一致。参考风扇控制页 .seg 的 inline-flex 凹槽写法。 */
+    #gl .seg { display:inline-flex; background:#f2f4f8; border-radius:var(--r-box);
+               padding:3px; gap:2px; flex-wrap:wrap; }
+    #gl .seg button { border:0; background:transparent; padding:7px 0; width:96px;
+                      border-radius:var(--r-ctl); font-size:13px; font-weight:600;
+                      color:#7c8698; cursor:pointer;
                       transition:background .15s, color .15s, box-shadow .15s;
-                      box-sizing:border-box; width:100%; text-align:center;
+                      box-sizing:border-box; text-align:center;
                       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     #gl .seg button:hover:not(.active):not(.dim) { color:var(--text); }
     #gl .seg button.active { background:#fff; color:var(--text); box-shadow:0 1px 3px rgba(16,24,40,.08); }
-    /* 所有分段控件统一为「内容宽度」的等分网格，整页视觉协调：
-       - 取消 width:100%：之前代理段只有 2 个选项却被拉伸到整栏宽，
-         每格 250px+，按钮显得过宽；现在按选项数量自然排布、左对齐。
-       - 取消 RESET 段固定 396px：之前它比代理/动作段明显窄一截，看着不统一。
-       - 单格统一 min-width:96px（上面已设），选项多少只改变格子数、不改变单格宽。
-       inline-grid 让容器宽度跟随内容；max-width:100% 在极窄栏内兜底不溢出。 */
-    #gl #proxySeg, #gl #actSeg, #gl .seg.seg4 { display:inline-grid; width:auto; max-width:100%; }
-    /* 列数：左拨动作固定 2 列；RESET 固定 4 列；代理由 JS 按检测数量设 1~3 列 */
-    #gl #actSeg   { grid-template-columns:repeat(2, minmax(96px, 1fr)); }
-    #gl .seg.seg4 { grid-template-columns:repeat(4, minmax(96px, 1fr)); }
-    /* 未安装的代理：灰显 + 不可点，与「可选列表要列全」配套 */
+    /* 未安装的代理：灰显 + 不可点 */
     #gl .seg button.dim { color:#bcc3cf; cursor:not-allowed; }
     #gl .seg button.dim:hover { color:#bcc3cf; }
 
@@ -379,18 +357,6 @@
                             </div>
                         </div>
 
-                        <div id="proxyItem">
-                            <div class="fxh">代理程序</div>
-                            <div class="fxctrls"><div class="seg" id="proxySeg"></div></div>
-                            <!-- 默认只显示系统里检测到的；想找预设里别的插件就点「检测」，
-                                 扫到什么补什么，不再一次性铺一整排灰色按钮。 -->
-                            <div class="fxscan">
-                                <button type="button" class="btn ghost" id="btnProxyScan" onclick="doProxyScan()">检测</button>
-                                <span class="fxnote" style="margin-top:0">只显示检测到的；点检测去扫描其他代理</span>
-                            </div>
-                            <div class="fxfind-list" id="scanList"></div>
-                        </div>
-
                         <div id="actItem">
                             <div class="fxh">左拨动作</div>
                             <div class="fxctrls"><div class="seg" id="actSeg"></div></div>
@@ -474,4 +440,4 @@
 
 {% include('footer') %}
 
-<script src="/luci-static/resources/mt3600be-toggle/toggle.js?v=20260930f"></script>
+<script src="/luci-static/resources/mt3600be-toggle/toggle.js?v=20261001a"></script>

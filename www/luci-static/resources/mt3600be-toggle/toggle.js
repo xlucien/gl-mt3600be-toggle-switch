@@ -42,9 +42,7 @@
     var SAVED = clone(INIT);
     var SAVED_CUSTOM = [];
     var firstLoad = true;
-    var dataUrl = '', saveUrl = '', applyUrl = '', defaultsUrl = '', searchUrl = '', scanUrl = '';
-    /* 「检测」扫出来、但后端还没算作「已检测到」的代理，会话内保留（整条结果） */
-    var SCANNED = [];
+    var dataUrl = '', saveUrl = '', applyUrl = '', defaultsUrl = '', searchUrl = '';
     /* 用户自己搜出来并选中的自定义代理（预设 8 个之外），保存时整份回传给后端 */
     var CUSTOM = [];
 
@@ -163,29 +161,14 @@
             ? CFG.proxies_detected.slice()
             : ((CFG.proxies && CFG.proxies.length) ? CFG.proxies.slice() : INIT.proxies.slice());
         /* 自定义目标始终保留在列表里：用户既然选过，就不该因为一次探测失败而消失 */
-        var i, j, k, found;
+        var i, j, found;
         for (i = 0; i < CUSTOM.length; i++) {
             found = false;
             for (j = 0; j < list.length; j++) if (list[j].target === CUSTOM[i]) found = true;
             if (!found)
                 list.push({ target: CUSTOM[i], state: 'not_installed', configured: false, running: false });
         }
-        /* 检测出来的：后端还没认，但用户刚扫到，也给它露个脸 */
-        for (k = 0; k < SCANNED.length; k++) {
-            found = false;
-            for (j = 0; j < list.length; j++) if (list[j].target === SCANNED[k].target) found = true;
-            if (!found) list.push(scanToProxy(SCANNED[k]));
-        }
         return list;
-    }
-    /* 检测结果 -> 与后端同构的代理条目，左右两栏共用一套渲染 */
-    function scanToProxy(it) {
-        return {
-            target: it.target,
-            state: it.has_init ? (it.running ? 'running' : 'installed') : 'not_installed',
-            configured: false,
-            running: !!it.running
-        };
     }
     /* 自定义代理（搜索结果里选中的、预设之外的程序） */
     function isCustom(t) {
@@ -261,34 +244,6 @@
         if (note)
             note.innerHTML = '左拨：<b>' + esc(actText(f, cur)) + '</b>；右拨：<b>'
                 + esc(actText(f, !cur)) + '</b>';
-    }
-
-    /* 左栏代理程序：和「左拨动作」一样用分段按钮，点一下即选。
-
-       【默认只显示检测到的】预设插件那一整排不再无条件铺出来 ——
-       这台机器只装了 daed，铺 9 个按钮里 8 个是灰的，看着像"坏了"。
-       装了什么就显示什么；想找预设里别的，点下面的「检测」去扫，
-       扫到哪个就补进来哪个。扫到的和自定义的都进 proxyDetected()。
-       状态文字统一放右栏，这里只给名字。 */
-    function renderProxySeg() {
-        var seg = $('proxySeg');
-        if (!seg) return;
-        var list = proxyDetected(), html = '', i, p;
-        for (i = 0; i < list.length; i++) {
-            p = list[i];
-            var nm = PROXY_NAME[p.target] || p.target;
-            var dead = (p.state === 'not_installed' && p.target !== 'auto');
-            html += '<button type="button" data-v="' + esc(p.target) + '"'
-                + (dead ? ' class="dim" disabled title="未安装"'
-                        : ' onclick="pickProxy(\'' + esc(p.target) + '\')"')
-                + '>' + esc(nm) + '</button>';
-        }
-        seg.innerHTML = html;
-        /* 列数跟着条目数走：只有 2 个就两列、1 个就单列，但单格宽度统一
-           min-width:96px（见 .ut），所以按钮不会因选项少而被拉伸得過宽 */
-        seg.style.gridTemplateColumns = 'repeat('
-            + (list.length < 3 ? (list.length || 1) : 3) + ', minmax(96px, 1fr))';
-        setSegActive('proxySeg', CFG.proxy_target);
     }
 
     /* 灯光模式三选一：三张可点选的卡片，点哪张就是哪种模式 */
@@ -475,14 +430,8 @@
         $('funcLabel').textContent = FUNC_LABEL[f];
         markSelCur('funcMenu', f);
 
-        var isLed = (f === 'led'), isProxy = (f === 'proxy'), isNone = (f === 'none');
+        var isLed = (f === 'led'), isNone = (f === 'none');
         $('actItem').style.display = isNone ? 'none' : 'block';
-
-        var proxyItem = $('proxyItem');
-        if (proxyItem) {
-            proxyItem.style.display = isProxy ? 'block' : 'none';
-            if (isProxy) renderProxySeg();
-        }
 
         renderActSeg();
         renderCap(f);
@@ -675,64 +624,6 @@
         toast('已选择：' + name + '　（记得保存）');
     }
 
-    /* ===== 预设代理「检测」=====
-       默认只显示系统里已经检测到的代理；点这个按钮让后端把名字像代理的
-       程序全扫一遍（/etc/init.d、/etc/config、已安装包），扫到就补进列表。 */
-    function doProxyScan() {
-        var btn = $('btnProxyScan');
-        if (btn) { btn.disabled = true; btn.textContent = '检测中'; }
-        fetch(scanUrl, { method: 'POST', credentials: 'same-origin' })
-            .then(function (r) { return r.json(); })
-            .then(function (j) {
-                if (btn) { btn.disabled = false; btn.textContent = '检测'; }
-                if (!j || !j.success) {
-                    toast('检测失败：' + ((j && j.error) ? j.error : '未知错误'));
-                    return;
-                }
-                renderScan(j.items || []);
-            })
-            .catch(function () {
-                if (btn) { btn.disabled = false; btn.textContent = '检测'; }
-                toast('检测请求失败');
-            });
-    }
-    function renderScan(items) {
-        var box = $('scanList'), html = '', i, it, already;
-        var shown = proxyDetected(), known = {};
-        for (i = 0; i < shown.length; i++) known[shown[i].target] = true;
-        if (!items.length) {
-            box.innerHTML = '<div class="hint">系统里没有找到名字像代理的程序。</div>';
-            toast('没有检测到其他代理程序');
-            return;
-        }
-        var fresh = 0;
-        for (i = 0; i < items.length; i++) {
-            it = items[i];
-            already = !!known[it.target];
-            /* 只有「有启停脚本」的才补进选择列表：没有启停脚本的程序
-               滑块根本控不了，铺一排灰按钮只是噪音；它们仍然出现在
-               下面的检测结果里，让用户自己看见、自己判断。
-               同理不自动写进 proxy_custom —— 写不写由用户点「选择」决定。 */
-            if (!already && it.has_init) {
-                fresh++;
-                SCANNED.push(it);
-                known[it.target] = true;
-            }
-            var sel = (CFG.proxy_target === it.target);
-            html += '<div class="frow' + (it.has_init ? ' click' : '') + (sel ? ' sel' : '') + '"'
-                + (it.has_init ? ' onclick="pickProxyFind(\'' + esc(it.target) + '\')"' : '') + '>'
-                + '<span class="fn">' + esc(it.label) + '</span>'
-                + '<span class="fsrc">' + esc(srcText(it.src)) + '</span>'
-                + (it.has_init
-                    ? '<span class="fbtn">' + (sel ? '已选择' : '选择') + '</span>'
-                    : '<span class="fbtn grey">无启停脚本</span>')
-                + '</div>';
-        }
-        box.innerHTML = html;
-        applyUI();
-        toast(fresh ? ('检测到 ' + fresh + ' 个新代理，已加入列表') : '检测完成，没有新发现');
-    }
-
     function mergeAll(d) {
         for (var k in d) if (d[k] !== undefined && d[k] !== null) CFG[k] = d[k];
         syncDerived(CFG);
@@ -806,7 +697,6 @@
         saveUrl = root.getAttribute('data-save-url');
         applyUrl = root.getAttribute('data-apply-url');
         searchUrl = root.getAttribute('data-search-url');
-        scanUrl = root.getAttribute('data-scan-url');
         defaultsUrl = root.getAttribute('data-defaults-url');
 
         document.addEventListener('click', function (e) {
@@ -823,7 +713,6 @@
         window.doApply = doApply;
         window.doDefaults = doDefaults;
         window.doProxySearch = doProxySearch;
-        window.doProxyScan = doProxyScan;
         window.pickProxyFind = pickProxyFind;
         window.dropCustom = dropCustom;
 
