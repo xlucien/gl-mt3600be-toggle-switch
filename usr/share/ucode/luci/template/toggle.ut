@@ -226,6 +226,14 @@
     #gl .opt.dim { color:#aab2c0; }
     #gl .opt.dim.cur { color:var(--brand); }
 
+    /* ⚠ 类名冲突修正：「功能」下拉的容器类 .sel 和卡片/行的选中态修饰类同名。
+       上面的 #gl .sel（1 id + 1 类）排在 .cap / .frow 之后、特异性又相同，
+       于是把选中条目的 display:flex 覆盖成了 inline-block —— 表现为
+       「一点就缩窄、又短又高」（单独蓝灯那张卡就是被这么缩掉的）。
+       这里用更高特异性（多带一个类）把 display 压回来；下拉本身不受影响。 */
+    #gl .cap.pick.sel { display:flex; flex-direction:column; }
+    #gl .frow.sel     { display:flex; align-items:center; }
+
     /* 分段控件：浅灰凹槽，选中项 = 白色浮起小块（不加黑环）。
        按钮固定宽度（关掉自动缩放）：选项多少、标签长短都不再改变单键尺寸，
        整页按键视觉一致。参考风扇控制页 .seg 的 inline-flex 凹槽写法。 */
